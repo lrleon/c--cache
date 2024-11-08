@@ -13,9 +13,13 @@
 
 
 # include <memory>
+# include <mutex>
+# include <condition_variable>
 # include <aleph.H>
 # include <tpl_dnode.H>
-//# include <tpl_lhash.H>
+# include <tpl_lhash.H> // TODO: delete this include
+
+# include <gtest/gtest.h>
 
 
 /* This is an implementation of a table-based associative cache.
@@ -47,64 +51,82 @@
 template <class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
 {
+
 public:
   
-  class CacheEntry //: public LhashTable<Key>::Bucket
+  class Entry
   {
-    friend class Cache<Key, Data>;
+    FRIEND_TEST(cache_entry, basic);
     
-    Data    data;
-    Dlink   dlink_lru; // enlace cola lru
-    Dlink   dlink_inside;
+  private:
     
-    bool locked; // Indicates that entry cannot be deleted
+    Key _key;
+    Data _data;
     
-    bool is_in_hash_table;
-    
-    void lock()
-    {
-      if (locked)
-        throw std::runtime_error("CacheEntry is already locked");
-      
-      locked = true;
-    }
-    
-    void unlock()
-    {
-      if (not locked)
-        throw std::runtime_error("CacheEntry is not locked");
-      
-      locked = false;
-    }
-    
-    Dlink* link_lru() { return &dlink_lru; }
-    
-    Dlink* link_inside() { return &dlink_inside; }
-  
   public:
     
-    CacheEntry(const Key & k, const Data & d)
-      : /* LhashTable<Key>::Bucket(k) */ data(d), locked(false),
-        is_in_hash_table(false)
+    Entry(const Key & k, const Data & d)
+      : _key(k), _data(d)
     {
       // empty
     }
     
-    CacheEntry() : data(), locked(false), is_in_hash_table(false)
+    Entry(Key && k, Data && d)
+      : _key(std::move(k)), _data(std::move(d))
     {
       // empty
     }
     
-    Data & get_data() { return data; }
+    Entry() = default;
     
-    const bool & is_locked() const { return locked; }
+    const Key & key() const { return _key; }
+    const Data & data() const { return _data; }
     
-    const bool & is_in_table() const { return is_in_hash_table; }
+    void set_key(const Key & k) { _key = k; }
+    void set_data(const Data & d) { _data = d; }
+    
+    void set_key(Key && k) { _key = std::move(k); }
+    void set_data(Data && d) { _data = std::move(d); }
+  }; // end class Entry
+  
+  class CacheEntry : public Entry
+  {
+    FRIEND_TEST(cache_entry, basic);
+    
+    enum class Status { AVAILABLE, CALCULATING, READY, FAILED };
+    
+    Dlink   _dlink_lru; // dlink to lru queue
+    
+    mutex   _mtx; // protects the CacheEntry while the calculation of the data is being done
+    condition_variable _waiting_cv; // used for wake-up invoker waiting for the data is ready
+    
+    uint8_t _status = static_cast<uint8_t>(Status::AVAILABLE); // status of the cache entry (AVAILABLE, CALCULATING, READY, FAILED)
+    int8_t _ad_hoc_code = 0; // ad hoc code to be used by the user for indicating their own codes
+    
+  public:
+    
+    CacheEntry() = default;
+    
+    Data get_data() { return this->data(); }
     
     static CacheEntry * convert_to_cache_entry(Data * data_ptr)
     {
       return reinterpret_cast<CacheEntry*>(data_ptr);
     }
+    
+    Dlink* link_lru() { return &_dlink_lru; }
+    
+    mutex & mtx() { return _mtx; }
+    
+    condition_variable & waiting_cv() { return _waiting_cv; }
+    
+    uint8_t status() { return _status; }
+    
+    void set_status(uint8_t status) { _status = status; }
+    
+    int8_t get_ad_hoc_code() { return _ad_hoc_code; }
+    
+    void set_ad_hoc_code(int8_t code) { _ad_hoc_code = code; }
   }; // end class CacheEntry
 
 private:
@@ -113,9 +135,10 @@ private:
   Dlink           locked_list;
   Dlink           inside_list;
   
-  //LhashTable<Key> hash_table;
+  //OLhashTable<Key, CacheEntry*, Cmp> hash_table;
+  LhashTable<Key> hash_table;
   
-  size_t          cache_size;  /* longitud del cache */
+  size_t          cache_size;  /* cache length */
 
 public:
   
@@ -130,15 +153,6 @@ private:
   
   size_t   num_lru;     /* number of elements in a lru list*/
   size_t   num_locked;  /* number of blocked elements */
-  /* This is a list of memory chunks. Each one is added to the list
-     while required during the cache lifetime.
-
-     A chunk of memory has the interesting property of being continuous
-     in memory, therefore, can be cached by the computer.
-  */
-  typedef Dnode<CacheEntry*> Chunk_Descriptor;
-  
-  Chunk_Descriptor chunk_list;
 
 protected:
   
@@ -265,36 +279,11 @@ public:
     
     auto * entries_array = new CacheEntry [cache_size];
     
-    try
-    {
-      std::unique_ptr<Chunk_Descriptor>
-        chunk_descriptor (new Chunk_Descriptor (entries_array));
-      
-      chunk_list.insert(chunk_descriptor.get());
-      
-      for (int i = 0; i < cache_size; i++)
-        insert_entry_to_lru_list(&entries_array[i]);
-      
-      chunk_descriptor.release();
-    }
-    catch (...)
-    {
-      delete [] entries_array;
-      throw;
-    }
+   
   }
   
   virtual ~Cache()
   {
-    assert(hash_table.size() <= cache_size);
-    
-    while (not chunk_list.is_empty())
-    {
-      Chunk_Descriptor * current_chunk = chunk_list.remove_next();
-      
-      delete [] current_chunk->get_data();
-      delete current_chunk;
-    }
   }
   
   CacheEntry * search(const Key & key)
@@ -390,17 +379,17 @@ public:
     
     try
     {
-      std::unique_ptr<Chunk_Descriptor>
-        chunk_descriptor (new Chunk_Descriptor (entries_array));
-      
-      hash_table.resize(13*(new_cache_size)/10);
-      
-      for (int i = 0; i < plus_size; i++)
-        insert_entry_to_lru_list(&entries_array[i]);
-      
-      chunk_list.insert(chunk_descriptor.release());
-      
-      cache_size = new_cache_size;
+//      std::unique_ptr<Chunk_Descriptor>
+//        chunk_descriptor (new Chunk_Descriptor (entries_array));
+//
+//      hash_table.resize(13*(new_cache_size)/10);
+//
+//      for (int i = 0; i < plus_size; i++)
+//        insert_entry_to_lru_list(&entries_array[i]);
+//
+//      chunk_list.insert(chunk_descriptor.release());
+//
+//      cache_size = new_cache_size;
     }
     catch (...)
     {
