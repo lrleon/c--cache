@@ -18,6 +18,7 @@
 # include <aleph.H>
 # include <tpl_dnode.H>
 # include <tpl_lhash.H> // TODO: delete this include
+#include <utility>
 
 # include <gtest/gtest.h>
 
@@ -109,36 +110,38 @@ public:
     
     Data get_data() { return this->data(); }
     
-    static CacheEntry * convert_to_cache_entry(Data * data_ptr)
-    {
-      return reinterpret_cast<CacheEntry*>(data_ptr);
-    }
-    
     Dlink* link_lru() { return &_dlink_lru; }
     
     mutex & mtx() { return _mtx; }
     
     condition_variable & waiting_cv() { return _waiting_cv; }
     
-    uint8_t status() { return _status; }
+    Status status() { return static_cast<Status>(_status); }
     
-    void set_status(uint8_t status) { _status = status; }
+    void set_status(const Status & status)
+    {
+      _status = to_underlying(status);
+    }
     
     int8_t get_ad_hoc_code() { return _ad_hoc_code; }
     
     void set_ad_hoc_code(int8_t code) { _ad_hoc_code = code; }
+    
+    static size_t hash_fct(const Key & key)
+    {
+      return SuperFastHash(reinterpret_cast<void*>(&key), sizeof(key));
+    }
   }; // end class CacheEntry
 
 private:
   
-  Dlink           lru_list;
-  Dlink           locked_list;
-  Dlink           inside_list;
+  Dlink           lru_list; // lru list
   
-  //OLhashTable<Key, CacheEntry*, Cmp> hash_table;
-  LhashTable<Key> hash_table;
+  OLhashTable<CacheEntry, Cmp> hash_table;
   
-  size_t          cache_size;  /* cache length */
+  size_t          cache_size;  // cache length; MUST less than hash_table.capacity()
+  
+  mutex           mtx; // protects the cache
 
 public:
   
@@ -149,45 +152,23 @@ public:
     return hash_table.size();
   }
 
-private:
-  
-  size_t   num_lru;     /* number of elements in a lru list*/
-  size_t   num_locked;  /* number of blocked elements */
-
 protected:
   
   LINKNAME_TO_TYPE(CacheEntry, dlink_lru);
   
-  LINKNAME_TO_TYPE(CacheEntry, dlink_inside);
-  
   void insert_entry_to_lru_list(CacheEntry * cache_entry)
   {
-    num_lru++;
     lru_list.insert(cache_entry->link_lru());
   }
   
   void remove_entry_from_lru_list(CacheEntry * cache_entry)
   {
-    num_lru--;
-    cache_entry->link_lru()->del();
-  }
-  
-  void insert_entry_to_locked_list(CacheEntry * cache_entry)
-  {
-    num_locked++;
-    locked_list.insert(cache_entry->link_lru());
-  }
-  
-  void remove_entry_from_locked_list(CacheEntry * cache_entry)
-  {
-    num_locked--;
     cache_entry->link_lru()->del();
   }
   
   void move_to_inside_front(CacheEntry * cache_entry)
   {
     cache_entry->link_inside()->del();
-    inside_list.insert(cache_entry->link_inside());
   }
   
   void move_to_lru_front(CacheEntry * cache_entry)
@@ -222,8 +203,6 @@ protected:
     cache_entry->link_inside()->del();
     
     hash_table.remove(cache_entry);
-    cache_entry->is_in_hash_table = false;
-    do_lru(cache_entry);
   }
   
   /* searches and returns the next entry according to lru priority that does not have
@@ -240,39 +219,15 @@ protected:
     Dlink * lru_entry_link = lru_list.get_prev();
     CacheEntry * cache_entry = dlink_lru_to_CacheEntry(lru_entry_link);
     
-    assert(not cache_entry->is_locked());
-    
-    if (cache_entry->is_in_hash_table)
-    {
-      assert(hash_table.search(cache_entry->get_key()) == cache_entry);
-      remove_entry_from_hash_table(cache_entry);
-    }
-    
-    do_mru(cache_entry);
-    
     return cache_entry;
   }
   
-  CacheEntry * insert_pair(const Key & key, const Data & data)
-  {
-    CacheEntry *cache_entry = get_lru_entry();
-    
-    cache_entry->get_key()  = key;
-    cache_entry->get_data() = data;
-    
-    inside_list.insert(cache_entry->link_inside());
-    
-    hash_table.insert(cache_entry);
-    cache_entry->is_in_hash_table = true;
-    
-    return cache_entry;
-  }
-
 public:
   
-  Cache(size_t (*hash_fct)(const Key&), const size_t & size)
+  Cache(const size_t & size,
+        size_t (*hash_fct)(const Key&) = CacheEntry::hash_fct)
     : hash_table(size, hash_fct),
-      cache_size(hash_table.capacity()), num_lru(0), num_locked(0)
+      cache_size(hash_table.capacity())
   {
     assert(size > 1);
     assert(hash_fct != nullptr);
@@ -281,12 +236,7 @@ public:
     
    
   }
-  
-  virtual ~Cache()
-  {
-  }
-  
-  CacheEntry * search(const Key & key)
+  bool has(const Key & key)
   {
     assert(hash_table.size() <= cache_size);
     
@@ -302,124 +252,46 @@ public:
     return cache_entry;
   }
   
-  /* returns the next cache entry with the same key
-     cacheEntry if it exists or null otherwise */
-  CacheEntry * search_next(CacheEntry * cache_entry)
-  {
-    auto *next_entry =
-      static_cast<CacheEntry*>(hash_table.search_next(cache_entry));
-    
-    if (next_entry != nullptr)
-    {
-      do_mru(next_entry);
-      move_to_inside_front(cache_entry);
-    }
-    
-    return next_entry;
-  }
-  
-  CacheEntry * insert(const Key& key, const Data& data)
+  Data * retrieve_from_cache_or_compute(const Key& key)
   {
     assert(hash_table.size() <= cache_size);
     
-    return insert_pair(key, data);
+    scoped_lock lock(mtx);
+    
+    // 1. Let entry be the result of a searching key in hash_table
+    // 2. If found ==> return a pointer to the data
+    // 3. If not found ==> compute the data and insert it into the cache
+    
+    // We need to block the invoking thread if the entry is found,
+    // but its state is CALCULATING. Once the data is ready, we must
+    // wake up the invoking thread.
   }
   
-  void lock_entry(CacheEntry * cache_entry)
+  void remove(const Key & key)
   {
-    assert(num_locked < get_num_entries());
-    assert(num_lru > 0);
-    assert(hash_table.search(cache_entry->get_key()) == cache_entry);
-    assert(cache_entry->is_in_hash_table);
-    
-    if (cache_entry->is_locked())
-      throw std::runtime_error("CacheEntry is already locked");
-    
-    remove_entry_from_lru_list(cache_entry);
-    insert_entry_to_locked_list(cache_entry);
-    
-    cache_entry->lock();
-  }
   
-  void unlock_entry(CacheEntry * cache_entry)
-  {
-    assert(hash_table.search(cache_entry->get_key()) == cache_entry);
-    assert(cache_entry->is_in_hash_table);
-    assert(num_locked <= get_num_entries());
-    
-    if (not cache_entry->is_locked())
-      throw std::runtime_error("CacheEntry is not locked");
-    
-    remove_entry_from_locked_list(cache_entry);
-    insert_entry_to_lru_list(cache_entry);
-    
-    cache_entry->unlock();
-  }
-  
-  void remove(CacheEntry * cache_entry)
-  {
-    assert(hash_table.search(cache_entry->get_key()) == cache_entry);
-    
-    if (cache_entry->is_locked())
-      throw std::runtime_error("CacheEntry is already locked");
-    
-    remove_entry_from_hash_table(cache_entry);
-  }
-  
-  void expand(const size_t & plus_size)
-  {
-    assert(hash_table.size() <= cache_size);
-    
-    if (plus_size == 0)
-      throw std::range_error ("bad plus_size");
-    
-    const size_t new_cache_size = cache_size + plus_size;
-    
-    auto * entries_array = new CacheEntry [plus_size];
-    
-    try
-    {
-//      std::unique_ptr<Chunk_Descriptor>
-//        chunk_descriptor (new Chunk_Descriptor (entries_array));
-//
-//      hash_table.resize(13*(new_cache_size)/10);
-//
-//      for (int i = 0; i < plus_size; i++)
-//        insert_entry_to_lru_list(&entries_array[i]);
-//
-//      chunk_list.insert(chunk_descriptor.release());
-//
-//      cache_size = new_cache_size;
-    }
-    catch (...)
-    {
-      delete []  entries_array;
-      throw;
-    }
   }
   
   const size_t & capacity() const { return cache_size; }
   
   const size_t & size() const { return hash_table.size(); }
   
-  const size_t & get_num_locked() const { return num_locked; }
-  
   const size_t & get_num_busy_slots() const
   {
     return hash_table.get_num_busy_slots();
   }
   
-  struct Iterator : public Dlink::Iterator
+  struct Iterator
   {
-    Iterator(Cache& _cache) : Dlink::Iterator(&_cache.inside_list)
+    Iterator(Cache& _cache)
     {
       // empty
     }
     
     CacheEntry * get_curr()
     {
-      CacheEntry * ret_val =
-        CacheEntry::dlink_inside_to_Cache_Entry(Dlink::Iterator::get_curr());
+      CacheEntry * ret_val = nullptr;
+//        CacheEntry::dlink_inside_to_Cache_Entry(Dlink::Iterator::get_curr());
       
       assert(ret_val->is_in_table());
       
