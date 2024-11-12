@@ -32,6 +32,15 @@ TEST(cache_entry, basic)
   cache_entry.set_ad_hoc_code(1);
   
   ASSERT_EQ(cache_entry.get_ad_hoc_code(), 1);
+
+  cache_entry.set_positive_ttl_exp_time(high_resolution_clock::now() + 1s);
+
+  ASSERT_FALSE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
+
+  // sleep for 1 second
+  sleep(1);
+
+  ASSERT_TRUE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
   
   cout << "CacheEntry: " << cache_entry.get_data() << endl;
 }

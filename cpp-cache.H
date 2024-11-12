@@ -2,25 +2,25 @@
 // Created by lrleon on 11/4/24.
 //
 
-#ifndef CPP_CACHE__CPP_CACHE_H
-#define CPP_CACHE__CPP_CACHE_H
+#ifndef CPP_CACHE_CACHE_H
+#define CPP_CACHE_CACHE_H
 
-# include <tpl_olhash.H>
-
-// TODO: we'll use the ctor with resize set to false and a fix size around 30% more
-// cells than the requested size. This is to avoid resizing the table qnd favoring
-// the hash entropy
-
-
+# include <chrono>
 # include <memory>
 # include <mutex>
 # include <condition_variable>
 # include <aleph.H>
 # include <tpl_dnode.H>
-# include <tpl_lhash.H> // TODO: delete this include
+
+# include <tpl_olhash.H>
+
 #include <utility>
 
 # include <gtest/gtest.h>
+
+using namespace std;
+using namespace Aleph;
+using namespace std::chrono;
 
 
 /* This is an implementation of a table-based associative cache.
@@ -93,43 +93,81 @@ public:
   class CacheEntry : public Entry
   {
     FRIEND_TEST(cache_entry, basic);
-    
-    enum class Status { AVAILABLE, CALCULATING, READY, FAILED };
-    
-    Dlink   _dlink_lru; // dlink to lru queue
-    
-    mutex   _mtx; // protects the CacheEntry while the calculation of the data is being done
+
+    enum class Status
+    {
+      AVAILABLE, CALCULATING, READY, FAILED
+    };
+
+    Dlink _dlink_lru; // dlink to lru queue
+
+    mutex _mtx; // protects the CacheEntry while the calculation of the data is being done
     condition_variable _waiting_cv; // used for wake-up invoker waiting for the data is ready
-    
+
     uint8_t _status = static_cast<uint8_t>(Status::AVAILABLE); // status of the cache entry (AVAILABLE, CALCULATING, READY, FAILED)
     int8_t _ad_hoc_code = 0; // ad hoc code to be used by the user for indicating their own codes
-    
+
+    time_point<high_resolution_clock> _positive_ttl_exp_time; // when positive ttl expires
+    time_point<high_resolution_clock> _negative_ttl_exp_time; // when negative ttl expires
+
   public:
-    
+
     CacheEntry() = default;
-    
-    Data get_data() { return this->data(); }
-    
-    Dlink* link_lru() { return &_dlink_lru; }
-    
-    mutex & mtx() { return _mtx; }
-    
-    condition_variable & waiting_cv() { return _waiting_cv; }
-    
-    Status status() { return static_cast<Status>(_status); }
-    
-    void set_status(const Status & status)
+
+    Data get_data()
+    { return this->data(); }
+
+    Dlink *link_lru()
+    { return &_dlink_lru; }
+
+    mutex &mtx()
+    { return _mtx; }
+
+    condition_variable &waiting_cv()
+    { return _waiting_cv; }
+
+    Status status()
+    { return static_cast<Status>(_status); }
+
+    void set_status(const Status &status)
     {
       _status = to_underlying(status);
     }
-    
-    int8_t get_ad_hoc_code() { return _ad_hoc_code; }
-    
-    void set_ad_hoc_code(int8_t code) { _ad_hoc_code = code; }
-    
-    static size_t hash_fct(const Key & key)
+
+    int8_t get_ad_hoc_code()
+    { return _ad_hoc_code; }
+
+    void set_ad_hoc_code(int8_t code)
+    { _ad_hoc_code = code; }
+
+    static size_t hash_fct(const Key &key)
     {
-      return SuperFastHash(reinterpret_cast<void*>(&key), sizeof(key));
+      return SuperFastHash(reinterpret_cast<void *>(&key), sizeof(key));
+    }
+
+    time_point<high_resolution_clock> positive_ttl_exp_time()
+    { return _positive_ttl_exp_time; }
+    time_point<high_resolution_clock> negative_ttl_exp_time()
+    { return _negative_ttl_exp_time; }
+
+    bool positive_ttl_expired(const high_resolution_clock::time_point &now) const
+    {
+      return now > _positive_ttl_exp_time;
+    }
+
+    bool negative_ttl_expired(const high_resolution_clock::time_point &now) const
+    {
+      return now > _negative_ttl_exp_time;
+    }
+
+    void set_positive_ttl_exp_time(const time_point<high_resolution_clock> & exp_time)
+    {
+      _positive_ttl_exp_time = exp_time;
+    }
+
+    void set_negative_ttl_exp_time(const time_point<high_resolution_clock> & exp_time)
+    {
+      _negative_ttl_exp_time = exp_time;
     }
   }; // end class CacheEntry
 
@@ -223,8 +261,11 @@ protected:
   }
   
 public:
-  
+
+  using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
+
   Cache(const size_t & size,
+        std::function<bool(const Key &, Data *, void *)> miss_handler,
         size_t (*hash_fct)(const Key&) = CacheEntry::hash_fct)
     : hash_table(size, hash_fct),
       cache_size(hash_table.capacity())
@@ -233,9 +274,8 @@ public:
     assert(hash_fct != nullptr);
     
     auto * entries_array = new CacheEntry [cache_size];
-    
-   
   }
+
   bool has(const Key & key)
   {
     assert(hash_table.size() <= cache_size);
@@ -302,4 +342,4 @@ public:
 
 
 
-#endif //CPP_CACHE__CPP_CACHE_H
+#endif // CPP_CACHE_CACHE_H
