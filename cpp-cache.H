@@ -22,7 +22,6 @@ using namespace std;
 using namespace Aleph;
 using namespace std::chrono;
 
-
 /* This is an implementation of a table-based associative cache.
    hash. The cache handles <Key, Data> pairs where Key is the key
    associative and Data is the data related to Key. are not allowed
@@ -49,50 +48,61 @@ using namespace std::chrono;
    replacement by lru policy.
 */
 
-template <class Key, class Data, class Cmp = std::equal_to<Key>>
+template<class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
 {
 
 public:
-  
+
   class Entry
   {
     FRIEND_TEST(cache_entry, basic);
-    
+
   private:
-    
+
     Key _key;
     Data _data;
-    
+
   public:
-    
-    Entry(const Key & k, const Data & d)
+
+    Entry(const Key &k, const Data &d)
       : _key(k), _data(d)
     {
       // empty
     }
-    
-    Entry(Key && k, Data && d)
+
+    Entry(Key &&k, Data &&d)
       : _key(std::move(k)), _data(std::move(d))
     {
       // empty
     }
-    
+
     Entry() = default;
-    
-    const Key & key() const { return _key; }
-    const Data & data() const { return _data; }
-    
-    void set_key(const Key & k) { _key = k; }
-    void set_data(const Data & d) { _data = d; }
-    
-    void set_key(Key && k) { _key = std::move(k); }
-    void set_data(Data && d) { _data = std::move(d); }
+
+    const Key &key() const
+    { return _key; }
+
+    const Data &data() const
+    { return _data; }
+
+    void set_key(const Key &k)
+    { _key = k; }
+
+    void set_data(const Data &d)
+    { _data = d; }
+
+    void set_key(Key &&k)
+    { _key = std::move(k); }
+
+    void set_data(Data &&d)
+    { _data = std::move(d); }
   }; // end class Entry
-  
+
   class CacheEntry : public Entry
   {
     FRIEND_TEST(cache_entry, basic);
+
+    friend struct SimpleFixture;
 
     enum class Status
     {
@@ -140,15 +150,15 @@ public:
     void set_ad_hoc_code(int8_t code)
     { _ad_hoc_code = code; }
 
-    static size_t hash_fct(const Key &key)
+    time_point<high_resolution_clock> positive_ttl_exp_time() const noexcept
     {
-      return SuperFastHash(reinterpret_cast<void *>(&key), sizeof(key));
+      return _positive_ttl_exp_time;
     }
 
-    time_point<high_resolution_clock> positive_ttl_exp_time() const noexcept
-    { return _positive_ttl_exp_time; }
     time_point<high_resolution_clock> negative_ttl_exp_time() const noexcept
-    { return _negative_ttl_exp_time; }
+    {
+      return _negative_ttl_exp_time;
+    }
 
     bool positive_ttl_expired(const high_resolution_clock::time_point &now) const
     {
@@ -160,131 +170,154 @@ public:
       return now > negative_ttl_exp_time();
     }
 
-    void set_positive_ttl_exp_time(const time_point<high_resolution_clock> & exp_time)
+    void set_positive_ttl_exp_time(const time_point<high_resolution_clock> &exp_time)
     {
       _positive_ttl_exp_time = exp_time;
     }
 
-    void set_negative_ttl_exp_time(const time_point<high_resolution_clock> & exp_time)
+    void set_negative_ttl_exp_time(const time_point<high_resolution_clock> &exp_time)
     {
       _negative_ttl_exp_time = exp_time;
     }
   }; // end class CacheEntry
 
-private: // data members of Cache class
-  
-  Dlink           lru_list; // lru list
-  
-  OLhashTable<CacheEntry, Cmp> hash_table;
-  
-  size_t          cache_size;  // cache length; MUST less than hash_table.capacity()
-  
-  mutex           mtx; // protects the cache
+private:
+
+  struct CacheCmp
+  {
+    bool operator()(const CacheEntry &lhs, const CacheEntry &rhs) const
+    {
+      return Cmp()(lhs.key(), rhs.key());
+    }
+  };
+
+  // ********** data members of Cache class
+
+  Dlink lru_list; // lru list
+
+  size_t (*key_hash_fct)(const Key &); // hash function
+
+  size_t (*cache_entry_hash_fct)(const CacheEntry &); // hash function for CacheEntry
+
+  unique_ptr<OLhashTable<CacheEntry, Cache::CacheCmp>> hash_table_ptr;
+
+  size_t cache_size;  // cache length; MUST less than hash_table_ptr->capacity()
+
+  mutex mtx; // protects the cache
 
 public:
-  
-  const size_t & get_num_entries() const
+
+  const size_t &get_num_entries() const
   {
-    assert(hash_table.size() <= cache_size);
-    
-    return hash_table.size();
+    assert(hash_table_ptr->size() <= cache_size);
+
+    return hash_table_ptr->size();
   }
 
 protected:
-  
+
   LINKNAME_TO_TYPE(CacheEntry, dlink_lru);
-  
-  void insert_entry_to_lru_list(CacheEntry * cache_entry)
+
+  void insert_entry_to_lru_list(CacheEntry *cache_entry)
   {
     lru_list.insert(cache_entry->link_lru());
   }
-  
-  void remove_entry_from_lru_list(CacheEntry * cache_entry)
+
+  void remove_entry_from_lru_list(CacheEntry *cache_entry)
   {
     cache_entry->link_lru()->del();
   }
 
-  void move_to_lru_front(CacheEntry * cache_entry)
+  void move_to_lru_front(CacheEntry *cache_entry)
   {
     cache_entry->link_lru()->del();
     lru_list.insert(cache_entry->link_lru());
   }
-  
-  void move_to_lru_rear(CacheEntry * cache_entry)
+
+  void move_to_lru_rear(CacheEntry *cache_entry)
   {
     cache_entry->link_lru()->del();
     lru_list.append(cache_entry->link_lru());
   }
-  
-  void do_mru(CacheEntry * cache_entry)
+
+  void do_mru(CacheEntry *cache_entry)
   {
     move_to_lru_front(cache_entry);
   }
-  
-  void do_lru(CacheEntry * cache_entry)
+
+  void do_lru(CacheEntry *cache_entry)
   {
     move_to_lru_rear(cache_entry);
   }
-  
+
   /*
     removes from hash table and makes the entry the least recently used
   */
-  void remove_entry_from_hash_table(CacheEntry * cache_entry)
+  void remove_entry_from_hash_table(CacheEntry *cache_entry)
   {
     assert(not cache_entry->is_locked());
-    
+
     cache_entry->link_inside()->del();
-    
-    hash_table.remove(cache_entry);
+
+    hash_table_ptr->remove(cache_entry);
   }
-  
+
   /* searches and returns the next entry according to lru priority that does not have
      a lock, removes from the hash table and makes the entry the most
      recently used.
   */
-  CacheEntry * get_lru_entry()
+  CacheEntry *get_lru_entry()
   {
-    assert(hash_table.size() <= cache_size);
-    
+    assert(hash_table_ptr->size() <= cache_size);
+
     if (lru_list.is_empty())
-      throw std::bad_alloc ();
-    
-    Dlink * lru_entry_link = lru_list.get_prev();
-    CacheEntry * cache_entry = dlink_lru_to_CacheEntry(lru_entry_link);
-    
+      throw std::bad_alloc();
+
+    Dlink *lru_entry_link = lru_list.get_prev();
+    CacheEntry *cache_entry = dlink_lru_to_CacheEntry(lru_entry_link);
+
     return cache_entry;
   }
-  
+
 public:
 
   using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
 
-  Cache(const size_t & size,
+  Cache(size_t size,
         std::function<bool(const Key &, Data *, void *)> miss_handler,
-        size_t (*hash_fct)(const Key&) = CacheEntry::hash_fct)
-    : hash_table(size, hash_fct),
-      cache_size(hash_table.capacity())
+        size_t (*hash_fct)(const Key &))
+    :  key_hash_fct(hash_fct), cache_size(size)
   {
     assert(size > 1);
     assert(hash_fct != nullptr);
+
+    // 1- Instaciamos una funcion hash que acepte hash_fct
+    // 2- Le pasamos esa al constructor de hash_table_ptr
+
+    // create a function pointer that accepts a CacheEntry and returns a size_t
+    cache_entry_hash_fct = [](const CacheEntry &cache_entry) -> size_t
+    {
+      return key_hash_fct(cache_entry.key());
+    };
+
   }
 
-  bool has(const Key & key)
+  bool has(const Key &key)
   {
-    assert(hash_table.size() <= cache_size);
+    assert(hash_table_ptr->size() <= cache_size);
 
     scoped_lock lock(mtx);
 
-    return static_cast<CacheEntry*>(hash_table.search(key)) != nullptr;
+    return static_cast<CacheEntry *>(hash_table_ptr->search(key)) != nullptr;
   }
 
-  bool touch(const Key & key)
+  bool touch(const Key &key)
   {
-    assert(hash_table.size() <= cache_size);
+    assert(hash_table_ptr->size() <= cache_size);
 
     scoped_lock lock(mtx);
 
-    auto * cache_entry = static_cast<CacheEntry*>(hash_table.search(key));
+    auto *cache_entry = static_cast<CacheEntry *>(hash_table_ptr->search(key));
     if (cache_entry != nullptr)
       {
         do_mru(cache_entry);
@@ -293,55 +326,55 @@ public:
 
     return cache_entry;
   }
-  
-  Data * retrieve_from_cache_or_compute(const Key& key)
+
+  Data *retrieve_from_cache_or_compute(const Key &key)
   {
-    assert(hash_table.size() <= cache_size);
-    
+    assert(hash_table_ptr->size() <= cache_size);
+
     scoped_lock lock(mtx);
-    
+
     // 1. Let entry be the result of a searching key in hash_table
     // 2. If found ==> return a pointer to the data
     // 3. If not found ==> compute the data and insert it into the cache
-    
+
     // We need to block the invoking thread if the entry is found,
     // but its state is CALCULATING. Once the data is ready, we must
     // wake up the invoking thread.
   }
-  
-  void remove(const Key & key)
+
+  void remove(const Key &key)
   {
-  
+
   }
-  
-  const size_t & capacity() const { return cache_size; }
-  
-  const size_t & size() const { return hash_table.size(); }
-  
-  const size_t & get_num_busy_slots() const
+
+  const size_t &capacity() const
+  { return cache_size; }
+
+  const size_t &size() const
+  { return hash_table_ptr->size(); }
+
+  const size_t &get_num_busy_slots() const
   {
-    return hash_table.get_num_busy_slots();
+    return hash_table_ptr->get_num_busy_slots();
   }
-  
+
   struct Iterator
   {
-    Iterator(Cache& _cache)
+    Iterator(Cache &_cache)
     {
       // empty
     }
-    
-    CacheEntry * get_curr()
+
+    CacheEntry *get_curr()
     {
-      CacheEntry * ret_val = nullptr;
+      CacheEntry *ret_val = nullptr;
 //        CacheEntry::dlink_inside_to_Cache_Entry(Dlink::Iterator::get_curr());
-      
+
       assert(ret_val->is_in_table());
-      
+
       return ret_val;
     }
   };
 };
-
-
 
 #endif // CPP_CACHE_CACHE_H
