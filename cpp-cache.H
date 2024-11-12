@@ -171,7 +171,7 @@ public:
     }
   }; // end class CacheEntry
 
-private:
+private: // data members of Cache class
   
   Dlink           lru_list; // lru list
   
@@ -203,12 +203,7 @@ protected:
   {
     cache_entry->link_lru()->del();
   }
-  
-  void move_to_inside_front(CacheEntry * cache_entry)
-  {
-    cache_entry->link_inside()->del();
-  }
-  
+
   void move_to_lru_front(CacheEntry * cache_entry)
   {
     cache_entry->link_lru()->del();
@@ -272,23 +267,30 @@ public:
   {
     assert(size > 1);
     assert(hash_fct != nullptr);
-    
-    auto * entries_array = new CacheEntry [cache_size];
   }
 
   bool has(const Key & key)
   {
     assert(hash_table.size() <= cache_size);
-    
-    auto * cache_entry =
-      static_cast<CacheEntry*>(hash_table.search(key));
-    
+
+    scoped_lock lock(mtx);
+
+    return static_cast<CacheEntry*>(hash_table.search(key)) != nullptr;
+  }
+
+  bool touch(const Key & key)
+  {
+    assert(hash_table.size() <= cache_size);
+
+    scoped_lock lock(mtx);
+
+    auto * cache_entry = static_cast<CacheEntry*>(hash_table.search(key));
     if (cache_entry != nullptr)
-    {
-      do_mru(cache_entry);
-      move_to_inside_front(cache_entry);
-    }
-    
+      {
+        do_mru(cache_entry);
+        move_to_inside_front(cache_entry);
+      }
+
     return cache_entry;
   }
   
