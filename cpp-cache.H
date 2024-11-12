@@ -145,19 +145,19 @@ public:
       return SuperFastHash(reinterpret_cast<void *>(&key), sizeof(key));
     }
 
-    time_point<high_resolution_clock> positive_ttl_exp_time()
+    time_point<high_resolution_clock> positive_ttl_exp_time() const noexcept
     { return _positive_ttl_exp_time; }
-    time_point<high_resolution_clock> negative_ttl_exp_time()
+    time_point<high_resolution_clock> negative_ttl_exp_time() const noexcept
     { return _negative_ttl_exp_time; }
 
     bool positive_ttl_expired(const high_resolution_clock::time_point &now) const
     {
-      return now > _positive_ttl_exp_time;
+      return now > positive_ttl_exp_time();
     }
 
     bool negative_ttl_expired(const high_resolution_clock::time_point &now) const
     {
-      return now > _negative_ttl_exp_time;
+      return now > negative_ttl_exp_time();
     }
 
     void set_positive_ttl_exp_time(const time_point<high_resolution_clock> & exp_time)
