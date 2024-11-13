@@ -51,13 +51,15 @@ using namespace std::chrono;
 template<class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
 {
-
-public:
+  FRIEND_TEST(SimpleFixture, test_hash_fct);
+  FRIEND_TEST(cache_entry, basic);
+  FRIEND_TEST(cache_entry, key_copy_works);
+  FRIEND_TEST(cache_entry, key_move_works);
+  FRIEND_TEST(cache_entry, data_copy_works);
+  FRIEND_TEST(cache_entry, data_move_works);
 
   class Entry
   {
-    FRIEND_TEST(cache_entry, basic);
-
   private:
 
     Key _key;
@@ -197,22 +199,13 @@ private:
 
   size_t (*key_hash_fct)(const Key &); // hash function
 
-  size_t (*cache_entry_hash_fct)(const CacheEntry &); // hash function for CacheEntry
+  std::function<size_t(const CacheEntry &)> cache_entry_hash_fct; // hash function for CacheEntry
 
   unique_ptr<OLhashTable<CacheEntry, Cache::CacheCmp>> hash_table_ptr;
 
   size_t cache_size;  // cache length; MUST less than hash_table_ptr->capacity()
 
   mutex mtx; // protects the cache
-
-public:
-
-  const size_t &get_num_entries() const
-  {
-    assert(hash_table_ptr->size() <= cache_size);
-
-    return hash_table_ptr->size();
-  }
 
 protected:
 
@@ -295,11 +288,10 @@ public:
     // 2- Le pasamos esa al constructor de hash_table_ptr
 
     // create a function pointer that accepts a CacheEntry and returns a size_t
-    cache_entry_hash_fct = [](const CacheEntry &cache_entry) -> size_t
+    cache_entry_hash_fct = [hash_fct](const CacheEntry &cache_entry) -> size_t
     {
-      return key_hash_fct(cache_entry.key());
+      return hash_fct(cache_entry.key());
     };
-
   }
 
   bool has(const Key &key)

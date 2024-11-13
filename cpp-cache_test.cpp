@@ -25,18 +25,18 @@ struct SimpleFixture : public Test
   Cache<int, int> cache;
 
   SimpleFixture()
-  : cache(10, miss_handler, hash_fct)
+    : cache(10, miss_handler, hash_fct)
   {
     // empty
   }
-
-  ~SimpleFixture()
-  {
-    // empty
-  }
-
-
 };
+
+TEST_F(SimpleFixture, test_hash_fct)
+{
+  ASSERT_EQ(hash_fct(10), 10);
+  Cache<int, int>::CacheEntry cache_entry;
+    cache_entry.set_key(10);
+}
 
 TEST(cache_entry, basic)
 {
@@ -127,3 +127,5 @@ TEST(cache_entry, data_move_works)
 
   OLhashTable<int, vector<int>> hash_table(10);
 }
+
+
