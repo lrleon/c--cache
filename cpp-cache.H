@@ -105,11 +105,9 @@ class Cache
 
     friend struct SimpleFixture;
 
-    enum class Status
-    {
-      AVAILABLE, CALCULATING, READY, FAILED
-    };
+    friend class Cache<Key, Data, Cmp>;
 
+    
     Dlink _dlink_lru; // dlink to lru queue
 
     mutex _mtx; // protects the CacheEntry while the calculation of the data is being done
@@ -123,7 +121,34 @@ class Cache
 
   public:
 
+    enum class Status
+    {
+      AVAILABLE, CALCULATING, READY, FAILED
+    };
+
     CacheEntry() = default;
+
+    CacheEntry(const Key &k, const Data &d)
+      : Entry(k, d)
+    {
+      // empty
+    }
+    friend void swap(typename Cache<Key, Data, Cmp>::CacheEntry& lhs, typename Cache<Key, Data, Cmp>::CacheEntry& rhs) noexcept {
+      lhs.swap(rhs);
+    }
+
+    void swap(CacheEntry &other)
+    {
+      std::swap(this->_key, other._key);
+      std::swap(this->_data, other._data);
+      std::swap(this->_dlink_lru, other._dlink_lru);
+      // std::swap(this->_mtx, other._mtx);
+      // std::swap(this->_waiting_cv, other._waiting_cv);
+      std::swap(this->_status, other._status);
+      std::swap(this->_ad_hoc_code, other._ad_hoc_code);
+      std::swap(this->_positive_ttl_exp_time, other._positive_ttl_exp_time);
+      std::swap(this->_negative_ttl_exp_time, other._negative_ttl_exp_time);
+    }
 
     size_t key_hash() const
     { return key_hash_fct(this->key()); }
@@ -140,7 +165,7 @@ class Cache
     condition_variable &waiting_cv()
     { return _waiting_cv; }
 
-    Status status()
+    Status status() const
     { return static_cast<Status>(_status); }
 
     void set_status(const Status &status)
@@ -208,14 +233,14 @@ private:
 
   OLhashTable<CacheEntry, Cache::CacheCmp> hash_table;
 
-  duration<float> positive_ttl;
-  duration<float> negative_ttl;
+  seconds positive_ttl;
+  seconds negative_ttl;
 
   mutex mtx; // protects the cache
 
 protected:
 
-  LINKNAME_TO_TYPE(CacheEntry, dlink_lru);
+  LINKNAME_TO_TYPE(CacheEntry, _dlink_lru);
 
   void insert_entry_to_lru_list(CacheEntry *cache_entry)
   {
@@ -252,13 +277,11 @@ protected:
   /*
     removes from hash table and makes the entry the least recently used
   */
-  void remove_entry_from_hash_table(CacheEntry *cache_entry)
+  void remove_entry_from_hash_table(CacheEntry * cache_entry)
   {
-    assert(not cache_entry->is_locked());
+    cache_entry->link_lru()->del();
 
-    cache_entry->link_inside()->del();
-
-    hash_table.remove(cache_entry);
+    hash_table.remove(*cache_entry);
   }
 
   /* searches and returns the next entry according to lru priority that does not have
@@ -273,7 +296,7 @@ protected:
       throw std::bad_alloc();
 
     Dlink *lru_entry_link = lru_list.get_prev();
-    CacheEntry *cache_entry = dlink_lru_to_CacheEntry(lru_entry_link);
+    CacheEntry *cache_entry = _dlink_lru_to_CacheEntry(lru_entry_link);
 
     return cache_entry;
   }
@@ -290,8 +313,8 @@ public:
   using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
 
   Cache(size_t size,
-        const duration<float> &positive_ttl,
-        const duration<float> &negative_ttl,
+        const seconds &positive_ttl,
+        const seconds &negative_ttl,
         std::function<bool(const Key &, Data *, void *)> miss_handler)
     : cache_size(size),
       hash_table(static_cast<size_t>(HashTableRatio * size),
@@ -343,9 +366,36 @@ public:
 
     scoped_lock lock(mtx);
 
-    // TODO: we need to verify if the entry has expired
+    CacheEntry *cache_entry = static_cast<CacheEntry*>(hash_table.search(key));
 
-    return static_cast<CacheEntry *>(hash_table.search(key)) != nullptr;
+    if (cache_entry == nullptr){
+      return false;
+    }
+
+    // Verify if the cache entry has expired
+    auto time_now = high_resolution_clock::now();
+    switch(static_cast<uint8_t>(cache_entry->status())){
+
+      case static_cast<uint8_t>(CacheEntry::Status::READY):
+        if (cache_entry->positive_ttl_expired(time_now)){
+          remove_entry_from_hash_table(cache_entry);
+          return false;
+        }
+        break;
+
+      case static_cast<uint8_t>(CacheEntry::Status::FAILED):
+        if (cache_entry->negative_ttl_expired(time_now)){
+          remove_entry_from_hash_table(cache_entry);
+          return false;
+        }
+        break;
+
+      default:
+        return false;
+    }
+
+    return true;
+
   }
 
   bool touch(const Key &key)

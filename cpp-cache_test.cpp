@@ -36,6 +36,14 @@ TEST_F(SimpleFixture, basic)
   ASSERT_EQ(cache.capacity(), 10);
   ASSERT_EQ(cache.size(), 0);
 
+  ASSERT_FALSE(cache.has(1));
+
+  cache.insert(1, 10);
+
+  ASSERT_EQ(cache.size(), 1);
+
+  ASSERT_TRUE(cache.has(1));
+
   // Insertas una entrada en la cache
   // verifica con has que esté
 
