@@ -59,12 +59,12 @@ class Cache
 
   class Entry
   {
-  private:
+   private:
 
     Key _key;
     Data _data;
 
-  public:
+   public:
 
     Entry(const Key &k, const Data &d)
       : _key(k), _data(d)
@@ -107,7 +107,6 @@ class Cache
 
     friend class Cache<Key, Data, Cmp>;
 
-    
     Dlink _dlink_lru; // dlink to lru queue
 
     mutex _mtx; // protects the CacheEntry while the calculation of the data is being done
@@ -119,7 +118,7 @@ class Cache
     time_point<high_resolution_clock> _positive_ttl_exp_time; // when positive ttl expires
     time_point<high_resolution_clock> _negative_ttl_exp_time; // when negative ttl expires
 
-  public:
+   public:
 
     enum class Status
     {
@@ -128,22 +127,23 @@ class Cache
 
     CacheEntry() = default;
 
-    CacheEntry(const Key &k, const Data &d)
+    CacheEntry(const Key &k, const Data &d = Data())
       : Entry(k, d)
     {
       // empty
     }
-    friend void swap(typename Cache<Key, Data, Cmp>::CacheEntry& lhs, typename Cache<Key, Data, Cmp>::CacheEntry& rhs) noexcept {
+
+    friend void
+    swap(typename Cache<Key, Data, Cmp>::CacheEntry &lhs, typename Cache<Key, Data, Cmp>::CacheEntry &rhs) noexcept
+    {
       lhs.swap(rhs);
     }
 
-    void swap(CacheEntry &other)
+    void swap(CacheEntry &other) noexcept
     {
       std::swap(this->_key, other._key);
       std::swap(this->_data, other._data);
       std::swap(this->_dlink_lru, other._dlink_lru);
-      // std::swap(this->_mtx, other._mtx);
-      // std::swap(this->_waiting_cv, other._waiting_cv);
       std::swap(this->_status, other._status);
       std::swap(this->_ad_hoc_code, other._ad_hoc_code);
       std::swap(this->_positive_ttl_exp_time, other._positive_ttl_exp_time);
@@ -210,7 +210,7 @@ class Cache
     }
   }; // end class CacheEntry
 
-private:
+ private:
 
   struct CacheCmp
   {
@@ -238,7 +238,7 @@ private:
 
   mutex mtx; // protects the cache
 
-protected:
+ protected:
 
   LINKNAME_TO_TYPE(CacheEntry, _dlink_lru);
 
@@ -277,7 +277,7 @@ protected:
   /*
     removes from hash table and makes the entry the least recently used
   */
-  void remove_entry_from_hash_table(CacheEntry * cache_entry)
+  void remove_entry_from_hash_table(CacheEntry *cache_entry)
   {
     cache_entry->link_lru()->del();
 
@@ -306,7 +306,7 @@ protected:
     return hash_table.insert(CacheEntry(std::move(key), std::move(data)));
   }
 
-public:
+ public:
 
   static constexpr float HashTableRatio = 1.3f;
 
@@ -364,35 +364,41 @@ public:
   {
     assert(hash_table.size() <= cache_size);
 
+    const CacheEntry entry(key);
+
     scoped_lock lock(mtx);
 
-    CacheEntry *cache_entry = static_cast<CacheEntry*>(hash_table.search(key));
+    auto cache_entry = hash_table.search(entry);
 
-    if (cache_entry == nullptr){
-      return false;
-    }
+    if (cache_entry == nullptr)
+      {
+        return false;
+      }
 
     // Verify if the cache entry has expired
     auto time_now = high_resolution_clock::now();
-    switch(static_cast<uint8_t>(cache_entry->status())){
+    switch (static_cast<uint8_t>(cache_entry->status()))
+      {
 
-      case static_cast<uint8_t>(CacheEntry::Status::READY):
-        if (cache_entry->positive_ttl_expired(time_now)){
-          remove_entry_from_hash_table(cache_entry);
-          return false;
-        }
+        case static_cast<uint8_t>(CacheEntry::Status::READY):
+          if (cache_entry->positive_ttl_expired(time_now))
+            {
+              remove_entry_from_hash_table(cache_entry);
+              return false;
+            }
         break;
 
-      case static_cast<uint8_t>(CacheEntry::Status::FAILED):
-        if (cache_entry->negative_ttl_expired(time_now)){
-          remove_entry_from_hash_table(cache_entry);
-          return false;
-        }
+        case static_cast<uint8_t>(CacheEntry::Status::FAILED):
+          if (cache_entry->negative_ttl_expired(time_now))
+            {
+              remove_entry_from_hash_table(cache_entry);
+              return false;
+            }
         break;
 
-      default:
-        return false;
-    }
+        default:
+          return false;
+      }
 
     return true;
 
