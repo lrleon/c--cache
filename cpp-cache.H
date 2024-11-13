@@ -51,7 +51,6 @@ using namespace std::chrono;
 template<class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
 {
-  FRIEND_TEST(SimpleFixture, test_hash_fct);
   FRIEND_TEST(cache_entry, basic);
   FRIEND_TEST(cache_entry, key_copy_works);
   FRIEND_TEST(cache_entry, key_move_works);
@@ -126,6 +125,9 @@ class Cache
 
     CacheEntry() = default;
 
+    size_t key_hash() const
+    { return key_hash_fct(this->key()); }
+
     Data get_data()
     { return this->data(); }
 
@@ -193,17 +195,21 @@ private:
     }
   };
 
+  static size_t cache_entry_hash_fct(const CacheEntry &cache_entry)
+  {
+    return SuperFastHash((void *) &cache_entry.key(), sizeof(cache_entry.key()));
+  }
+
   // ********** data members of Cache class
 
   Dlink lru_list; // lru list
 
-  size_t (*key_hash_fct)(const Key &); // hash function
+  size_t cache_size;  // cache length; MUST less than hash_table.capacity()
 
-  std::function<size_t(const CacheEntry &)> cache_entry_hash_fct; // hash function for CacheEntry
+  OLhashTable<CacheEntry, Cache::CacheCmp> hash_table;
 
-  unique_ptr<OLhashTable<CacheEntry, Cache::CacheCmp>> hash_table_ptr;
-
-  size_t cache_size;  // cache length; MUST less than hash_table_ptr->capacity()
+  duration<float> positive_ttl;
+  duration<float> negative_ttl;
 
   mutex mtx; // protects the cache
 
@@ -252,7 +258,7 @@ protected:
 
     cache_entry->link_inside()->del();
 
-    hash_table_ptr->remove(cache_entry);
+    hash_table.remove(cache_entry);
   }
 
   /* searches and returns the next entry according to lru priority that does not have
@@ -261,7 +267,7 @@ protected:
   */
   CacheEntry *get_lru_entry()
   {
-    assert(hash_table_ptr->size() <= cache_size);
+    assert(hash_table.size() <= cache_size);
 
     if (lru_list.is_empty())
       throw std::bad_alloc();
@@ -272,44 +278,83 @@ protected:
     return cache_entry;
   }
 
+  CacheEntry *insert_in_hash_table(Key &&key, Data &&data)
+  {
+    return hash_table.insert(CacheEntry(std::move(key), std::move(data)));
+  }
+
 public:
+
+  static constexpr float HashTableRatio = 1.3f;
 
   using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
 
   Cache(size_t size,
-        std::function<bool(const Key &, Data *, void *)> miss_handler,
-        size_t (*hash_fct)(const Key &))
-    :  key_hash_fct(hash_fct), cache_size(size)
+        const duration<float> &positive_ttl,
+        const duration<float> &negative_ttl,
+        std::function<bool(const Key &, Data *, void *)> miss_handler)
+    : cache_size(size),
+      hash_table(static_cast<size_t>(HashTableRatio * size),
+                 cache_entry_hash_fct,
+                 CacheCmp(),
+                 hash_default_lower_alpha,
+                 hash_default_upper_alpha,
+                 false),
+      positive_ttl(positive_ttl), negative_ttl(negative_ttl)
   {
     assert(size > 1);
-    assert(hash_fct != nullptr);
+  }
 
-    // 1- Instaciamos una funcion hash que acepte hash_fct
-    // 2- Le pasamos esa al constructor de hash_table_ptr
+  bool insert(Key &&key, Data &&data)
+  {
+    assert(hash_table.size() <= cache_size);
 
-    // create a function pointer that accepts a CacheEntry and returns a size_t
-    cache_entry_hash_fct = [hash_fct](const CacheEntry &cache_entry) -> size_t
-    {
-      return hash_fct(cache_entry.key());
-    };
+    scoped_lock lock(mtx);
+
+    // TODO: part of this method should be dryed to insert_in_hash_table helper method
+    if (hash_table.size() == cache_size) // Is the cache full?
+      { // Yes ==> remove the lru list and from the hash table
+        CacheEntry *lru_entry = get_lru_entry();
+        remove_entry_from_hash_table(lru_entry);
+      }
+
+    assert(hash_table.size() < cache_size);
+
+    CacheEntry *cache_entry =
+      hash_table.insert(CacheEntry(std::move(key), std::move(data)));
+
+    if (cache_entry == nullptr) // TODO: consider replacing with an assert
+      return false;
+
+    insert_entry_to_lru_list(cache_entry);
+
+    auto time_now = high_resolution_clock::now();
+
+    cache_entry->set_positive_ttl_exp_time(time_now + positive_ttl);
+    cache_entry->set_negative_ttl_exp_time(time_now + negative_ttl);
+    cache_entry->set_status(CacheEntry::Status::READY);
+
+    return true;
   }
 
   bool has(const Key &key)
   {
-    assert(hash_table_ptr->size() <= cache_size);
+    assert(hash_table.size() <= cache_size);
 
     scoped_lock lock(mtx);
 
-    return static_cast<CacheEntry *>(hash_table_ptr->search(key)) != nullptr;
+    // TODO: we need to verify if the entry has expired
+
+    return static_cast<CacheEntry *>(hash_table.search(key)) != nullptr;
   }
 
   bool touch(const Key &key)
   {
-    assert(hash_table_ptr->size() <= cache_size);
+    assert(hash_table.size() <= cache_size);
 
     scoped_lock lock(mtx);
 
-    auto *cache_entry = static_cast<CacheEntry *>(hash_table_ptr->search(key));
+    auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(key));
     if (cache_entry != nullptr)
       {
         do_mru(cache_entry);
@@ -321,7 +366,7 @@ public:
 
   Data *retrieve_from_cache_or_compute(const Key &key)
   {
-    assert(hash_table_ptr->size() <= cache_size);
+    assert(hash_table.size() <= cache_size);
 
     scoped_lock lock(mtx);
 
@@ -343,11 +388,11 @@ public:
   { return cache_size; }
 
   const size_t &size() const
-  { return hash_table_ptr->size(); }
+  { return hash_table.size(); }
 
   const size_t &get_num_busy_slots() const
   {
-    return hash_table_ptr->get_num_busy_slots();
+    return hash_table.get_num_busy_slots();
   }
 
   struct Iterator
