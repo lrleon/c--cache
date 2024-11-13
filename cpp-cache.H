@@ -22,6 +22,7 @@ using namespace std;
 using namespace Aleph;
 using namespace std::chrono;
 
+
 /* This is an implementation of a table-based associative cache.
    hash. The cache handles <Key, Data> pairs where Key is the key
    associative and Data is the data related to Key. are not allowed
@@ -78,6 +79,40 @@ class Cache
       // empty
     }
 
+    Entry(const Entry &other)
+      : _key(other._key), _data(other._data)
+    {
+      // empty
+    }
+
+    Entry(Entry &&other) noexcept
+      : _key(std::move(other._key)), _data(std::move(other._data))
+    {
+      // empty
+    }
+
+    Entry &operator=(const Entry &other)
+    {
+      if (this == &other)
+        return *this;
+
+      _key = other._key;
+      _data = other._data;
+
+      return *this;
+    }
+
+    Entry &operator=(Entry &&other) noexcept
+    {
+      if (this == &other)
+        return *this;
+
+      _key = std::move(other._key);
+      _data = std::move(other._data);
+
+      return *this;
+    }
+
     Entry() = default;
 
     const Key &key() const
@@ -97,6 +132,20 @@ class Cache
 
     void set_data(Data &&d)
     { _data = std::move(d); }
+
+    void swap(Entry &other) noexcept
+    {
+      using std::swap;
+      swap(this->_key, other._key);
+      swap(this->_data, other._data);
+    }
+
+    friend void swap(Entry &lhs, Entry &rhs) noexcept
+    {
+      using std::swap;
+      swap(lhs._key, rhs._key);
+      swap(lhs._data, rhs._data);
+    }
   }; // end class Entry
 
   class CacheEntry : public Entry
@@ -133,16 +182,75 @@ class Cache
       // empty
     }
 
+    CacheEntry(Key &&k, Data &&d = Data())
+      : Entry(std::move(k), std::move(d))
+    {
+      // empty
+    }
+
+    CacheEntry(const CacheEntry &other)
+      : Entry(other), _dlink_lru(other._dlink_lru),
+        _status(other._status), _ad_hoc_code(other._ad_hoc_code),
+        _positive_ttl_exp_time(other._positive_ttl_exp_time),
+        _negative_ttl_exp_time(other._negative_ttl_exp_time)
+    {
+      // empty
+    }
+
+    CacheEntry(CacheEntry &&other) noexcept
+      : Entry(std::move(other)), _dlink_lru(std::move(other._dlink_lru)),
+        _status(other._status), _ad_hoc_code(other._ad_hoc_code),
+        _positive_ttl_exp_time(other._positive_ttl_exp_time),
+        _negative_ttl_exp_time(other._negative_ttl_exp_time)
+    {
+      // empty
+    }
+
+    CacheEntry &operator=(const CacheEntry &other)
+    {
+      if (this == &other)
+        return *this;
+
+      Entry::operator=(other);
+      _dlink_lru = other._dlink_lru;
+      _status = other._status;
+      _ad_hoc_code = other._ad_hoc_code;
+      _positive_ttl_exp_time = other._positive_ttl_exp_time;
+      _negative_ttl_exp_time = other._negative_ttl_exp_time;
+
+      return *this;
+    }
+
+    CacheEntry &operator=(CacheEntry &&other) noexcept
+    {
+      if (this == &other)
+        return *this;
+
+      Entry::operator=(std::move(other));
+      _dlink_lru = std::move(other._dlink_lru);
+      _status = other._status;
+      _ad_hoc_code = other._ad_hoc_code;
+      _positive_ttl_exp_time = other._positive_ttl_exp_time;
+      _negative_ttl_exp_time = other._negative_ttl_exp_time;
+
+      return *this;
+    }
+
+    bool operator==(const CacheEntry &other) const
+    {
+      return this->key() == other.key();
+    }
+
     friend void
-    swap(typename Cache<Key, Data, Cmp>::CacheEntry &lhs, typename Cache<Key, Data, Cmp>::CacheEntry &rhs) noexcept
+    swap(typename Cache<Key, Data, Cmp>::CacheEntry &lhs,
+         typename Cache<Key, Data, Cmp>::CacheEntry &rhs) noexcept
     {
       lhs.swap(rhs);
     }
 
     void swap(CacheEntry &other) noexcept
     {
-      std::swap(this->_key, other._key);
-      std::swap(this->_data, other._data);
+      this->Entry::swap(other);
       std::swap(this->_dlink_lru, other._dlink_lru);
       std::swap(this->_status, other._status);
       std::swap(this->_ad_hoc_code, other._ad_hoc_code);
