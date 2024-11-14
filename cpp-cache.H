@@ -425,7 +425,29 @@ class Cache
 
   CacheEntry *insert_in_hash_table(Key &&key, Data &&data)
   {
-    return hash_table.insert(CacheEntry(std::move(key), std::move(data)));
+    if (hash_table.size() == cache_size) // Is the cache full?
+    { // Yes ==> remove the lru list and from the hash table
+      CacheEntry *lru_entry = get_lru_entry();
+      remove_entry_from_hash_table(lru_entry);
+    }
+
+    assert(hash_table.size() < cache_size);
+
+    CacheEntry *cache_entry =
+      hash_table.insert(CacheEntry(std::move(key), std::move(data)));
+
+    if (cache_entry == nullptr) // TODO: consider replacing with an assert
+      return nullptr;
+
+    insert_entry_to_lru_list(cache_entry);
+
+    auto time_now = high_resolution_clock::now();
+
+    cache_entry->set_positive_ttl_exp_time(time_now + positive_ttl);
+    cache_entry->set_negative_ttl_exp_time(time_now + negative_ttl);
+    cache_entry->set_status(CacheEntry::Status::READY);
+
+    return cache_entry;
   }
 
   bool verify_entry_ttl_expired(CacheEntry *cache_entry,
@@ -494,28 +516,10 @@ class Cache
 
     scoped_lock lock(mtx);
 
-    // TODO: part of this method should be dryed to insert_in_hash_table helper method
-    if (hash_table.size() == cache_size) // Is the cache full?
-      { // Yes ==> remove the lru list and from the hash table
-        CacheEntry *lru_entry = get_lru_entry();
-        remove_entry_from_hash_table(lru_entry);
-      }
+    auto cache_entry = insert_in_hash_table(std::move(key), std::move(data));
 
-    assert(hash_table.size() < cache_size);
-
-    CacheEntry *cache_entry =
-      hash_table.insert(CacheEntry(std::move(key), std::move(data)));
-
-    if (cache_entry == nullptr) // TODO: consider replacing with an assert
+    if (cache_entry == nullptr)
       return false;
-
-    insert_entry_to_lru_list(cache_entry);
-
-    auto time_now = high_resolution_clock::now();
-
-    cache_entry->set_positive_ttl_exp_time(time_now + positive_ttl);
-    cache_entry->set_negative_ttl_exp_time(time_now + negative_ttl);
-    cache_entry->set_status(CacheEntry::Status::READY);
 
     return true;
   }
@@ -576,6 +580,31 @@ class Cache
     return make_pair(cache_entry->key(), cache_entry->data());
   }
 
+  pair<Data*, int8_t> resolve_cache_miss(const Key &key)
+  {
+    Data * data = new Data();
+
+    CacheEntry* cache_entry =  insert_in_hash_table(std::move(key), std::move(*data));
+
+    cache_entry->set_status(CacheEntry::Status::CALCULATING);
+    
+
+    int8_t ad_hoc_code = 0;
+    if (miss_handler(key, data, nullptr))
+    {
+      cache_entry->set_ad_hoc_code(ad_hoc_code); // TODO: review this
+      cache_entry->set_status(CacheEntry::Status::READY);
+      cache_entry->waiting_cv().notify_all();
+    } else {
+      ad_hoc_code=-1;
+      cache_entry->set_ad_hoc_code(ad_hoc_code); // TODO: review this
+      cache_entry->set_status(CacheEntry::Status::FAILED);
+      cache_entry->waiting_cv().notify_all();
+    }
+
+    return make_pair(data, ad_hoc_code);
+  }
+
  public:
 
   pair<Key, Data> get_lru()
@@ -623,7 +652,7 @@ class Cache
           if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
             do_mru(cache_entry);
           else
-            ret = resolve_cache_miss(key);
+            ret = resolve_cache_miss(entry);
           break;
         default:
           ah_fatal_error()
@@ -635,19 +664,7 @@ class Cache
     }
 
     // 3. If not found ==> compute the data and insert it into the cache
-
-    cache_entry->set_status(CacheEntry::Status::CALCULATING);
-
-    Data * data = new Data();
-
-    if (miss_handler(key, data, nullptr))
-    {
-      insert(key, std::move(*data));        
-    } else {
-      cache_entry->set_status(CacheEntry::Status::FAILED);
-    }
-
-    return data;
+    return resolve_cache_miss(entry);
   }
 
   void remove(const Key &key)

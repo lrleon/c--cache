@@ -102,6 +102,7 @@ struct SimpleFixture : public Test
 {
   static bool miss_handler(const int &key, int *data, void *user_data)
   {
+    *data = key * 10;
     return true;
   }
 
@@ -279,6 +280,18 @@ TEST_F(SimpleFixture, remove)
   ASSERT_FALSE(cache.has(1));
 
 }
+
+
+TEST_F(SimpleFixture, retrieve_or_compute_basic)
+{
+  auto res = cache.retrieve_from_cache_or_compute(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(res.first, 10);
+
+}
+
 
 
 
