@@ -116,7 +116,7 @@ struct SimpleFixture : public Test
 
 TEST_F(SimpleFixture, basic)
 {
-  ASSERT_EQ(cache.capacity(), 10);
+  ASSERT_EQ(cache.capacity(), 5);
   ASSERT_EQ(cache.size(), 0);
   //cache is empty
   ASSERT_FALSE(cache.has(1));
@@ -222,6 +222,45 @@ TEST_F(SimpleFixture, touch)
   ASSERT_NE(cache.get_lru_entry()->key(), 1);
   // touch unknown key
   ASSERT_FALSE(cache.touch(90));
+
+}
+
+TEST_F(SimpleFixture, cache_is_full)
+{
+  cache.insert(1, 10);
+  cache.insert(2, 20);
+  cache.insert(3, 30);
+  cache.insert(4, 40);
+  cache.insert(5, 50);
+
+  ASSERT_EQ(cache.size(), 5);
+
+  {
+    auto p_lru = cache.get_lru();
+    ASSERT_EQ(p_lru.first, 1);
+    ASSERT_EQ(p_lru.second, 10);
+
+    auto p_mru = cache.get_mru();
+    ASSERT_EQ(p_mru.first, 5);
+    ASSERT_EQ(p_mru.second, 50);
+  }
+
+  // insert a new key
+  cache.insert(6, 60);
+
+  ASSERT_EQ(cache.size(), 5);
+
+  {
+    auto p_lru = cache.get_lru();
+    ASSERT_EQ(p_lru.first, 2);
+    ASSERT_EQ(p_lru.second, 20);
+
+    auto p_mru = cache.get_mru();
+    ASSERT_EQ(p_mru.first, 6);
+    ASSERT_EQ(p_mru.second, 60);
+  }
+
+  ASSERT_FALSE(cache.has(1));
 
 }
 
