@@ -467,14 +467,14 @@ class Cache
 
   static constexpr float HashTableRatio = 1.3f;
 
-  using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
+  using MissHandler = std::function<bool(const Key &, Data *, void *)>; // ad hoc pointer for receiving user data
 
   MissHandler miss_handler;
 
   Cache(size_t size,
         const seconds &positive_ttl,
         const seconds &negative_ttl,
-        std::function<bool(const Key &, Data *, void *)> miss_handler)
+        MissHandler miss_handler)
     : cache_size(size),
       hash_table(static_cast<size_t>(HashTableRatio * size),
                  cache_entry_hash_fct,
@@ -530,8 +530,11 @@ class Cache
 
     auto cache_entry = hash_table.search(entry);
 
-    return cache_entry != nullptr and
-           verify_entry_ttl_expired(cache_entry, high_resolution_clock::now());
+    if (cache_entry == nullptr)
+      return false;
+    
+    scoped_lock entry_lock(cache_entry->mtx());
+    return verify_entry_ttl_expired(cache_entry, high_resolution_clock::now());
   }
 
   bool touch(const Key &key)
@@ -543,14 +546,18 @@ class Cache
     scoped_lock lock(mtx);
 
     auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(key));
-    const bool ret = cache_entry != nullptr and
-                     verify_entry_ttl_expired(cache_entry, high_resolution_clock::now());
 
-    if (ret)
+    if (cache_entry == nullptr)
+      return false;
+
+    scoped_lock entry_lock(cache_entry->mtx());
+    if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
+    {
       do_mru(cache_entry);
-
-    return ret;
-  }
+      return true;
+    }
+    return false;
+  };
 
  private:
 
@@ -581,33 +588,53 @@ class Cache
     return get_extreme_from_lrl_list(&Cache<Key, Data, Cmp>::get_mru_entry);
   }
 
-  Data *retrieve_from_cache_or_compute(const Key &key)
+  // computed/retrived data, ad hoc status set by the miss handler
+  pair<Data*, int8_t> retrieve_from_cache_or_compute(const Key &key)
   {
     assert(hash_table.size() <= cache_size);
 
+    CacheEntry entry(key);
+
     scoped_lock lock(mtx);
 
-    // 1. Let entry be the result of a searching key in hash_table
-
-    CacheEntry entry(key);
+    // 1. Let entry be the result of a searching key in hash_table    
 
     auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
 
     // 2. If found ==> return a pointer to the data
     if (cache_entry != nullptr)
     {
-      if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
+      scoped_lock entry_lock(cache_entry->mtx());
+      pair<Data * , int8_t> ret = {nullptr, cache_entry->get_ad_hoc_code()};
+      switch (cache_entry->status())
       {
-        do_mru(cache_entry);
-        return &cache_entry->get_data();
+        case CacheEntry::Status::AVAILABLE:
+          ah_fatal_error()
+            << "retrieve_from_cache_or_compute() helper called on an entry with status"
+            << CacheEntry::status_to_string(cache_entry->status()) << endl;
+          break;
+        case CacheEntry::Status::CALCULATING:
+          // wait for the data to be ready
+          cache_entry->waiting_cv().wait(entry_lock);
+          ret.second = cache_entry->get_ad_hoc_code();
+        case CacheEntry::Status::READY:
+          ret.first = &cache_entry->get_data();
+        case CacheEntry::Status::FAILED:
+          if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
+            do_mru(cache_entry);
+          else
+            ret = resolve_cache_miss(key);
+          break;
+        default:
+          ah_fatal_error()
+            << "retrieve_from_cache_or_compute() helper called on an entry with status"
+            << static_cast<int>(cache_entry->status()) << endl;
+          break;
       }
-      // if expired, compute again
+      return ret;
     }
 
     // 3. If not found ==> compute the data and insert it into the cache
-    // We need to block the invoking thread if the entry is found,
-    // but its state is CALCULATING. Once the data is ready, we must
-    // wake up the invoking thread.
 
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
 
@@ -615,15 +642,12 @@ class Cache
 
     if (miss_handler(key, data, nullptr))
     {
-      if (insert(key, std::move(*data)))
-      {
-
-        
-      }
-        
+      insert(key, std::move(*data));        
+    } else {
+      cache_entry->set_status(CacheEntry::Status::FAILED);
     }
 
-    return data;    
+    return data;
   }
 
   void remove(const Key &key)
