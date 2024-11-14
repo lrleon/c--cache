@@ -469,6 +469,8 @@ class Cache
 
   using MissHandler = bool(const Key &, Data *, void *); // ad hoc pointer for receiving user data
 
+  MissHandler miss_handler;
+
   Cache(size_t size,
         const seconds &positive_ttl,
         const seconds &negative_ttl,
@@ -480,7 +482,8 @@ class Cache
                  hash_default_lower_alpha,
                  hash_default_upper_alpha,
                  false),
-      positive_ttl(positive_ttl), negative_ttl(negative_ttl)
+      positive_ttl(positive_ttl), negative_ttl(negative_ttl),
+      miss_handler(miss_handler)
   {
     assert(size > 1);
   }
@@ -585,17 +588,54 @@ class Cache
     scoped_lock lock(mtx);
 
     // 1. Let entry be the result of a searching key in hash_table
-    // 2. If found ==> return a pointer to the data
-    // 3. If not found ==> compute the data and insert it into the cache
 
+    CacheEntry entry(key);
+
+    auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
+
+    // 2. If found ==> return a pointer to the data
+    if (cache_entry != nullptr)
+    {
+      if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
+      {
+        do_mru(cache_entry);
+        return &cache_entry->get_data();
+      }
+      // if expired, compute again
+    }
+
+    // 3. If not found ==> compute the data and insert it into the cache
     // We need to block the invoking thread if the entry is found,
     // but its state is CALCULATING. Once the data is ready, we must
     // wake up the invoking thread.
+
+    cache_entry->set_status(CacheEntry::Status::CALCULATING);
+
+    Data * data = new Data();
+
+    if (miss_handler(key, data, nullptr))
+    {
+      if (insert(key, std::move(*data)))
+      {
+
+        
+      }
+        
+    }
+
+    return data;    
   }
 
   void remove(const Key &key)
   {
+    scoped_lock lock(mtx);
 
+    CacheEntry entry(key);
+
+    auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
+
+    if (cache_entry != nullptr)
+      remove_entry_from_hash_table(cache_entry);
   }
 
   const size_t &capacity() const { return cache_size; }

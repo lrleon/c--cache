@@ -264,3 +264,21 @@ TEST_F(SimpleFixture, cache_is_full)
 
 }
 
+TEST_F(SimpleFixture, remove)
+{
+  cache.insert(1, 10);
+  cache.insert(2, 20);
+
+  ASSERT_EQ(cache.size(), 2);
+
+  ASSERT_TRUE(cache.has(1));
+
+  cache.remove(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_FALSE(cache.has(1));
+
+}
+
+
+
