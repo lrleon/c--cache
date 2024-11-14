@@ -288,8 +288,7 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
 
   ASSERT_EQ(cache.size(), 1);
   ASSERT_TRUE(cache.has(1));
-  ASSERT_EQ(res.first, 10);
-
+  ASSERT_EQ(*res.first, 10);
 }
 
 
