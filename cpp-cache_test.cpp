@@ -18,7 +18,7 @@ TEST(cache_entry, basic)
   ASSERT_EQ(cache_entry.status(),
             Cache::CacheEntry::Status::AVAILABLE);
   ASSERT_TRUE(cache_entry.link_lru()->is_empty());
-  ASSERT_EQ(cache_entry.get_ad_hoc_code(), 0);
+  ASSERT_EQ(cache_entry.ad_hoc_code(), 0);
 
   cache_entry.set_data(10);
 
@@ -29,9 +29,9 @@ TEST(cache_entry, basic)
   ASSERT_EQ(cache_entry.status(),
             Cache::CacheEntry::Status::READY);
 
-  cache_entry.set_ad_hoc_code(1);
+  cache_entry.ad_hoc_code() = 1;
 
-  ASSERT_EQ(cache_entry.get_ad_hoc_code(), 1);
+  ASSERT_EQ(cache_entry.ad_hoc_code(), 1);
 
   cache_entry.set_positive_ttl_exp_time(high_resolution_clock::now() + 1s);
   cache_entry.set_negative_ttl_exp_time(high_resolution_clock::now() + 2s);

@@ -288,9 +288,7 @@ class Cache
       _status = static_cast<uint8_t>(status);
     }
 
-    int8_t get_ad_hoc_code() { return _ad_hoc_code; }
-
-    void set_ad_hoc_code(int8_t code) { _ad_hoc_code = code; }
+    int8_t & ad_hoc_code() { return _ad_hoc_code; }
 
     time_point<high_resolution_clock> positive_ttl_exp_time() const noexcept
     {
@@ -487,7 +485,8 @@ class Cache
 
   static constexpr float HashTableRatio = 1.3f;
 
-  using MissHandler = std::function<bool(const Key &, Data *, void *)>; // ad hoc pointer for receiving user data
+  using MissHandler =
+    std::function<bool(const Key &, Data *, uint8_t & ad_hoc_status, void *)>;
 
   MissHandler miss_handler;
 
@@ -609,8 +608,9 @@ class Cache
     scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
 
-    int8_t ad_hoc_code = 0; // TODO: ad hoc code must be set by the miss handler ==> receive it as parameter
-    if (miss_handler(cache_entry->key(), &cache_entry->data(), nullptr))
+    int8_t ad_hoc_code = 0;
+    if (miss_handler(cache_entry->key(), &cache_entry->data(),
+                     cache_entry->ad_hoc_code(), nullptr))
       cache_entry->set_status(CacheEntry::Status::READY);
     else
       cache_entry->set_status(CacheEntry::Status::FAILED);
