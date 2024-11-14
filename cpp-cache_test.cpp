@@ -25,7 +25,7 @@ struct SimpleFixture : public Test
   Cache<int, int> cache;
 
   SimpleFixture()
-    : cache(10,  5s, 1s, miss_handler)
+    : cache(10,  1s, 1s, miss_handler)
   {
     // empty
   }
@@ -35,19 +35,57 @@ TEST_F(SimpleFixture, basic)
 {
   ASSERT_EQ(cache.capacity(), 10);
   ASSERT_EQ(cache.size(), 0);
-
+  //cache is empty
   ASSERT_FALSE(cache.has(1));
-
+  //insert a key-value pair
   cache.insert(1, 10);
+  //cache is not empty
+  ASSERT_EQ(cache.size(), 1);
+  // check lru entry
+  ASSERT_EQ(cache.get_lru_entry()->key(), 1);
+  //key is in cache
+  ASSERT_TRUE(cache.has(1));
+  // wait ttl to expire
+  sleep(1);
+  // key is not in cache
+  ASSERT_FALSE(cache.has(1));
+  // check expired key was removed from cache
+  ASSERT_EQ(cache.size(), 0);
+}
+
+TEST_F(SimpleFixture, lru) {
+  cache.insert(1, 10);
+  cache.insert(2, 20);
+
+  ASSERT_EQ(cache.size(), 2);
+
+  // check lru entry
+  ASSERT_EQ(cache.get_lru_entry()->key(), 1);
+  ASSERT_NE(cache.get_lru_entry()->key(), 90);
+
+  // remove lru entry
+  cache.remove_entry_from_hash_table(cache.get_lru_entry());
 
   ASSERT_EQ(cache.size(), 1);
 
-  ASSERT_TRUE(cache.has(1));
+  // check lru entry
+  ASSERT_EQ(cache.get_lru_entry()->key(), 2);
+}
 
-  // Insertas una entrada en la cache
-  // verifica con has que esté
+TEST_F(SimpleFixture, touch) {
+  cache.insert(1, 10);
+  cache.insert(2, 20);
 
-  // espe
+  ASSERT_EQ(cache.size(), 2);
+
+  // touch key 1
+  ASSERT_TRUE(cache.touch(1));
+  // check lru entry
+  ASSERT_EQ(cache.get_lru_entry()->key(), 2);
+  ASSERT_NE(cache.get_lru_entry()->key(), 1);
+  // touch unknown key
+  ASSERT_FALSE(cache.touch(90));
+
 }
 
 TEST(cache_entry, basic)

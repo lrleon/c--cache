@@ -51,7 +51,10 @@ using namespace std::chrono;
 
 template<class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
-{
+{ 
+  FRIEND_TEST(SimpleFixture, basic);
+  FRIEND_TEST(SimpleFixture, lru);
+  FRIEND_TEST(SimpleFixture, touch);
   FRIEND_TEST(cache_entry, basic);
   FRIEND_TEST(cache_entry, key_copy_works);
   FRIEND_TEST(cache_entry, key_move_works);
@@ -519,13 +522,11 @@ class Cache
     scoped_lock lock(mtx);
 
     auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(key));
-    if (cache_entry != nullptr)
-      {
+    bool ret = cache_entry != nullptr;
+    if (ret)
         do_mru(cache_entry);
-        move_to_inside_front(cache_entry);
-      }
 
-    return cache_entry;
+    return ret;
   }
 
   Data *retrieve_from_cache_or_compute(const Key &key)
@@ -551,7 +552,7 @@ class Cache
   const size_t &capacity() const
   { return cache_size; }
 
-  const size_t &size() const
+  size_t size() const
   { return hash_table.size(); }
 
   const size_t &get_num_busy_slots() const
