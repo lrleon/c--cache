@@ -59,6 +59,7 @@ class Cache
   FRIEND_TEST(cache_entry, key_move_works);
   FRIEND_TEST(cache_entry, data_copy_works);
   FRIEND_TEST(cache_entry, data_move_works);
+  FRIEND_TEST(SimpleFixture, get_cache_entry);
 
   class Entry
   {
@@ -142,6 +143,13 @@ class Cache
       swap(lhs._key, rhs._key);
       swap(lhs._data, rhs._data);
     }
+
+    // assuming data is a pointer to the field _data of Entry class,
+    // it returns a pointer to Entry
+    static Entry * to_Entry(Data & data)
+    {
+      return reinterpret_cast<Entry *>(reinterpret_cast<char *>(&data) - offsetof(Entry, _data));
+    }
   }; // end class Entry
 
   class CacheEntry : public Entry
@@ -164,6 +172,11 @@ class Cache
     time_point<high_resolution_clock> _negative_ttl_exp_time; // when negative ttl expires
 
    public:
+
+    static CacheEntry * to_CacheEntry(Data & data)
+    {
+      return reinterpret_cast<CacheEntry *>(Entry::to_Entry(data));
+    }
 
     enum class Status
     {
@@ -506,7 +519,9 @@ class Cache
     assert(size > 1);
   }
 
-  bool insert(Key &&key, Data &&data)
+  // Insert a pair <key, data> into the cache. If successful, it returns a pointer
+  // to the data in the cache. Otherwise, it returns nullptr.
+  Data * insert(Key &&key, Data &&data)
   {
     assert(hash_table.size() <= cache_size);
 
@@ -518,9 +533,9 @@ class Cache
                                             high_resolution_clock::now());
 
     if (cache_entry == nullptr)
-      return false;
+      return nullptr;
 
-    return true;
+    return &cache_entry->get_data();
   }
 
   bool has(const Key &key)

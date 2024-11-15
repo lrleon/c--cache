@@ -164,7 +164,7 @@ TEST_F(SimpleFixture, lru)
 
 TEST_F(SimpleFixture, insert_with_has_and_touch)
 {
-  ASSERT_TRUE(cache.insert(1, 10))
+  ASSERT_NE(cache.insert(1, 10), nullptr)
             << "It should be able to insert a key-value pair";
 
   ASSERT_TRUE(cache.has(1))
@@ -305,6 +305,17 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
       ASSERT_EQ(*res.first, 10 + i);
       ASSERT_EQ(res.second, 1);
     }
+}
+
+TEST_F(SimpleFixture, get_cache_entry)
+{
+  int * data = cache.insert(1, 10);
+
+  auto cache_entry = Cache<int, int>::CacheEntry::to_CacheEntry(*data);
+
+  ASSERT_EQ(cache_entry->key(), 1);
+  ASSERT_EQ(cache_entry->get_data(), 10);
+  ASSERT_EQ(&cache_entry->get_data(), data);
 }
 
 struct TimeConsumingFixture : public Test
