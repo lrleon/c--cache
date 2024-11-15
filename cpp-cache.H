@@ -593,7 +593,7 @@ class Cache
 
  private:
 
-  pair<Data *, int8_t>
+  pair<Data*, int8_t>
   resolve_cache_miss(CacheEntry &entry,
                      const high_resolution_clock::time_point &time_now)
   {

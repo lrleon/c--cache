@@ -307,8 +307,39 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
     }
 }
 
+struct TimeConsumingFixture : public Test
+{
+  static bool miss_handler(const int &key, int *data,
+                           int8_t &ad_hoc_code)
+  {
+    *data = key * 10;
+    ++ad_hoc_code; // never must be greater than 1
+    sleep(1);
+    return true;
+  }
 
+  Cache<int, int> cache;
 
+  TimeConsumingFixture()
+    : cache(5, 3s, 1s, miss_handler)
+  {
+    // empty
+  }
+};
+
+TEST_F(TimeConsumingFixture, retrieve_or_compute_time_consuming)
+{
+  auto res = cache.retrieve_from_cache_or_compute(1);
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, 1);
+
+  res = cache.retrieve_from_cache_or_compute(1);
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+}
 
 
 
