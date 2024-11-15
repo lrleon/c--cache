@@ -449,6 +449,10 @@ class Cache
 
     CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
 
+    // TODO: since the entry could already exist (allocated by another thread), we
+    // need to handle the case where the entry is already in the hash table. We can
+    // identify this case if the entry is nullptr
+
     assert(cache_entry != nullptr);
 
     insert_entry_to_lru_list(cache_entry);
@@ -610,11 +614,9 @@ class Cache
  private:
 
   pair<Data*, int8_t>
-  resolve_cache_miss(CacheEntry *&cache_entry,
+  resolve_cache_miss(CacheEntry *& cache_entry,
                      const high_resolution_clock::time_point &time_now)
   {
-    // CacheEntry *cache_entry = nullptr;
-
     { // allocate a new entry in the hash table for key
       scoped_lock lock(mtx);
       cache_entry = insert_in_hash_table(move(*cache_entry), time_now);
@@ -663,7 +665,8 @@ class Cache
             break;
             case CacheEntry::Status::CALCULATING:
               cache_entry->waiting_cv().wait(entry_lock); // wait for the data to be ready
-            ret.second = cache_entry->ad_hoc_code();
+              assert(cache_entry->status() == CacheEntry::Status::READY or
+                     cache_entry->status() == CacheEntry::Status::FAILED);           ret.second = cache_entry->ad_hoc_code();
             case CacheEntry::Status::READY:
               ret.first = &cache_entry->get_data();
             case CacheEntry::Status::FAILED:
@@ -683,8 +686,7 @@ class Cache
       }
 
     // 3. If not found ==> compute the data and insert it into the cache
-    CacheEntry* temp_entry = &entry;
-    return resolve_cache_miss(temp_entry, high_resolution_clock::now());
+    return resolve_cache_miss(cache_entry, high_resolution_clock::now());
   }
 
   void remove(const Key &key)
