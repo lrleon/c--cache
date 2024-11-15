@@ -60,6 +60,7 @@ class Cache
   FRIEND_TEST(cache_entry, data_copy_works);
   FRIEND_TEST(cache_entry, data_move_works);
   FRIEND_TEST(SimpleFixture, get_cache_entry);
+  FRIEND_TEST(TimeConsumingFixture, calculating_status_while_computing);
 
   class Entry
   {
@@ -609,18 +610,19 @@ class Cache
  private:
 
   pair<Data*, int8_t>
-  resolve_cache_miss(CacheEntry &entry,
+  resolve_cache_miss(CacheEntry *&cache_entry,
                      const high_resolution_clock::time_point &time_now)
   {
-    CacheEntry *cache_entry = nullptr;
+    // CacheEntry *cache_entry = nullptr;
 
     { // allocate a new entry in the hash table for key
       scoped_lock lock(mtx);
-      cache_entry = insert_in_hash_table(move(entry), time_now);
+      cache_entry = insert_in_hash_table(move(*cache_entry), time_now);
     }
 
     scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
+    cout << "...CALCULATING" << endl;
 
     if (miss_handler(cache_entry->key(), &cache_entry->data(),
                      cache_entry->ad_hoc_code()))
@@ -671,7 +673,7 @@ class Cache
                 verify_entry_ttl_expired(cache_entry, time_now))
                 do_mru(cache_entry);
               else
-                ret = resolve_cache_miss(entry, time_now);
+                ret = resolve_cache_miss(cache_entry, time_now);
             break;
             default:
               ah_fatal_error()
@@ -683,7 +685,8 @@ class Cache
       }
 
     // 3. If not found ==> compute the data and insert it into the cache
-    return resolve_cache_miss(entry, high_resolution_clock::now());
+    CacheEntry* temp_entry = &entry;
+    return resolve_cache_miss(temp_entry, high_resolution_clock::now());
   }
 
   void remove(const Key &key)

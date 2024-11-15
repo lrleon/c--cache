@@ -3,8 +3,9 @@
 //
 
 # include <iostream>
-#include <utility>
+# include <utility>
 # include <gtest/gtest.h>
+# include <future>
 # include "cpp-cache.H"
 
 using namespace std;
@@ -40,7 +41,7 @@ TEST(cache_entry, basic)
   ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
 
   // sleep for 1 second
-  sleep(1);
+  std::this_thread::sleep_for(std::chrono::seconds(1));
 
   ASSERT_TRUE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
   ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
@@ -325,7 +326,7 @@ struct TimeConsumingFixture : public Test
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
-    sleep(1);
+    sleep(2);
     return true;
   }
 
@@ -338,18 +339,31 @@ struct TimeConsumingFixture : public Test
   }
 };
 
-TEST_F(TimeConsumingFixture, retrieve_or_compute_time_consuming)
+TEST_F(TimeConsumingFixture, calculating_status_while_computing)
 {
-  auto res = cache.retrieve_from_cache_or_compute(1);
+  using CacheEntry = Cache<int, int>::CacheEntry;
+  // CacheEntry cache_entry(1);
+  CacheEntry * cache_entry = new CacheEntry(1);
+  auto future = std::async(std::launch::async, [this, &cache_entry]() mutable {
+    return cache.resolve_cache_miss(cache_entry, high_resolution_clock::now());
+  });
+
+  // wait 1s
+  sleep(1);
+  cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
+  ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING); 
+  // wait miss handler to finish
+  pair<int *, int8_t> res = future.get();
+
+  cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
+  ASSERT_EQ(cache_entry->status(), CacheEntry::Status::READY);
+
   ASSERT_EQ(cache.size(), 1);
   ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
   ASSERT_EQ(res.second, 1);
+  ASSERT_EQ(cache_entry->data(), 10);
 
-  res = cache.retrieve_from_cache_or_compute(1);
-  ASSERT_EQ(cache.size(), 1);
-  ASSERT_TRUE(cache.has(1));
-  ASSERT_EQ(*res.first, 10);
 }
 
 
