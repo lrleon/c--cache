@@ -686,6 +686,7 @@ class Cache
       }
 
     // 3. If not found ==> compute the data and insert it into the cache
+    cache_entry = &entry;
     return resolve_cache_miss(cache_entry, high_resolution_clock::now());
   }
 

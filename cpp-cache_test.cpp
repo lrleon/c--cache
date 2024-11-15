@@ -357,7 +357,7 @@ struct TimeConsumingFixture : public Test
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
-
+    sleep(2);
     return true;
   }
 
