@@ -48,7 +48,7 @@ using namespace std::chrono;
    replacement by lru policy.
 */
 
-template<class Key, class Data, class Cmp = std::equal_to<Key>>
+template<class Key, class Data, class Cmp = std::equal_to<Key>, typename ... Args>
 class Cache
 {
   FRIEND_TEST(SimpleFixture, basic);
@@ -481,19 +481,18 @@ class Cache
     return true;
   }
 
- public:
+  public:
+
+  using MissHandlerType = std::function<bool(const Key &, Data *, int8_t &, Args...)>;
 
   static constexpr float HashTableRatio = 1.3f;
 
-  using MissHandler =
-    std::function<bool(const Key &, Data *, int8_t & ad_hoc_status, void *)>;
-
-  MissHandler miss_handler;
+  MissHandlerType miss_handler;
 
   Cache(size_t size,
         const seconds &positive_ttl,
         const seconds &negative_ttl,
-        MissHandler miss_handler)
+        MissHandlerType miss_handler)
     : cache_size(size),
       hash_table(static_cast<size_t>(HashTableRatio * size),
                  cache_entry_hash_fct,
@@ -608,19 +607,15 @@ class Cache
     scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
 
-    int8_t ad_hoc_code = 0;
     if (miss_handler(cache_entry->key(), &cache_entry->data(),
-                     cache_entry->ad_hoc_code(), nullptr))
+                     cache_entry->ad_hoc_code()))
       cache_entry->set_status(CacheEntry::Status::READY);
     else
       cache_entry->set_status(CacheEntry::Status::FAILED);
 
     cache_entry->waiting_cv().notify_all();
 
-    // TODO: once the data has been written to the cache entry and the ttl stuff and stats, ad_hoc_code, etc. have
-    //  been set, then we can return the data and ad_hoc_code
-
-    return make_pair(&cache_entry->data(), ad_hoc_code);
+    return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
   }
 
  public:

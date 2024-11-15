@@ -98,12 +98,16 @@ TEST(cache_entry, data_move_works)
   ASSERT_TRUE(data.empty());
 }
 
+///template <typename ... Args>
 struct SimpleFixture : public Test
 {
-  static bool miss_handler(const int &key, int *data, int8_t &ad_hoc_code,
-                           void *user_data)
+  //template <typename ... Args>
+  static bool miss_handler(const int &key, int *data,
+                           int8_t &ad_hoc_code /*,
+                           Args ... args */)
   {
     *data = key * 10;
+    ++ad_hoc_code; // never must be greater than 1
     return true;
   }
 
@@ -279,7 +283,6 @@ TEST_F(SimpleFixture, remove)
 
   ASSERT_EQ(cache.size(), 1);
   ASSERT_FALSE(cache.has(1));
-
 }
 
 
@@ -290,6 +293,9 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
   ASSERT_EQ(cache.size(), 1);
   ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, -1);
+
+
 }
 
 
