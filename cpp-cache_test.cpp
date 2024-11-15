@@ -293,10 +293,21 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
   ASSERT_EQ(cache.size(), 1);
   ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
-  ASSERT_EQ(res.second, -1);
+  ASSERT_EQ(res.second, 1);
 
+  for (int i = 1; i < 10; ++i)
+    {
+      res = cache.retrieve_from_cache_or_compute(1);
 
+      ASSERT_EQ(cache.size(), 1);
+      ASSERT_TRUE(cache.has(1));
+      (*res.first)++;
+      ASSERT_EQ(*res.first, 10 + i);
+      ASSERT_EQ(res.second, 1);
+    }
 }
+
+
 
 
 

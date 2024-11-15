@@ -593,7 +593,7 @@ class Cache
 
  private:
 
-  pair<const Data *, int8_t>
+  pair<Data *, int8_t>
   resolve_cache_miss(CacheEntry &entry,
                      const high_resolution_clock::time_point &time_now)
   {
@@ -621,7 +621,7 @@ class Cache
  public:
 
   // computed/retrieved data, ad hoc status set by the miss handler
-  pair<const Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
+  pair<Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
   {
     assert(hash_table.size() <= cache_size);
 
@@ -637,7 +637,7 @@ class Cache
     if (cache_entry != nullptr)
       {
         unique_lock entry_lock(cache_entry->mtx());
-        pair<const Data *, int8_t> ret = {nullptr, cache_entry->ad_hoc_code()};
+        pair<Data *, int8_t> ret = {nullptr, cache_entry->ad_hoc_code()};
         switch (cache_entry->status())
           {
             case CacheEntry::Status::AVAILABLE:
