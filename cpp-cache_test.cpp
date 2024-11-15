@@ -318,6 +318,38 @@ TEST_F(SimpleFixture, get_cache_entry)
   ASSERT_EQ(&cache_entry->get_data(), data);
 }
 
+TEST_F(SimpleFixture, iterator)
+{
+  cache.insert(1, 10);
+  cache.insert(2, 20);
+  cache.insert(3, 30);
+  cache.insert(4, 40);
+  cache.insert(5, 50);
+
+  auto it = cache.begin();
+  ASSERT_EQ(it->first, 1);
+  ASSERT_EQ(it->second, 10);
+
+  ++it;
+  ASSERT_EQ(it->first, 2);
+  ASSERT_EQ(it->second, 20);
+
+  ++it;
+  ASSERT_EQ(it->first, 3);
+  ASSERT_EQ(it->second, 30);
+
+  ++it;
+  ASSERT_EQ(it->first, 4);
+  ASSERT_EQ(it->second, 40);
+
+  ++it;
+  ASSERT_EQ(it->first, 5);
+  ASSERT_EQ(it->second, 50);
+
+  ++it;
+  ASSERT_EQ(it, cache.end());
+}
+
 struct TimeConsumingFixture : public Test
 {
   static bool miss_handler(const int &key, int *data,
@@ -351,6 +383,8 @@ TEST_F(TimeConsumingFixture, retrieve_or_compute_time_consuming)
   ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
 }
+
+
 
 
 

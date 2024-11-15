@@ -628,7 +628,7 @@ class Cache
     else
       cache_entry->set_status(CacheEntry::Status::FAILED);
 
-    cache_entry->waiting_cv().notify_all();
+    cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with key
 
     return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
   }
@@ -643,26 +643,24 @@ class Cache
     CacheEntry entry(key);
     CacheEntry *cache_entry = nullptr;
 
-    {
+    { // 1. Search for the entry in the hash table
       scoped_lock lock(mtx);
       cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
     }
 
-    // 2. If found ==> return a pointer to the data
     if (cache_entry != nullptr)
-      {
+      { // 2. found!
         unique_lock entry_lock(cache_entry->mtx());
         pair<Data *, int8_t> ret = {nullptr, cache_entry->ad_hoc_code()};
-        switch (cache_entry->status())
+        switch (cache_entry->status()) // check the status of the entry
           {
-            case CacheEntry::Status::AVAILABLE:
+            case CacheEntry::Status::AVAILABLE: // should not happen
               ah_fatal_error()
                 << "retrieve_from_cache_or_compute() helper called on an entry with status"
                 << CacheEntry::status_to_string(cache_entry->status()) << endl;
             break;
             case CacheEntry::Status::CALCULATING:
-              // wait for the data to be ready
-              cache_entry->waiting_cv().wait(entry_lock);
+              cache_entry->waiting_cv().wait(entry_lock); // wait for the data to be ready
             ret.second = cache_entry->ad_hoc_code();
             case CacheEntry::Status::READY:
               ret.first = &cache_entry->get_data();
@@ -707,21 +705,19 @@ class Cache
     return hash_table.get_num_busy_slots();
   }
 
-  struct Iterator
+  struct Iterator : public OLhashTable<CacheEntry, CacheCmp>::Iterator
   {
     Iterator(Cache &_cache)
     {
-      // empty
+      scoped_lock lock(_cache.mtx);
     }
 
-    CacheEntry *get_curr()
+    pair<const Key&, Data*> *get_curr()
     {
-      CacheEntry *ret_val = nullptr;
-//        CacheEntry::dlink_inside_to_Cache_Entry(Dlink::Iterator::get_curr());
+      CacheEntry * cache_entry =
+        OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
-      assert(ret_val->is_in_table());
-
-      return ret_val;
+      return {&cache_entry->key(), &cache_entry->data()};
     }
   };
 };
