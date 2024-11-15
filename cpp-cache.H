@@ -447,7 +447,22 @@ class Cache
 
     assert(hash_table.size() < cache_size);
 
-    CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
+    // CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
+    auto p = hash_table.contains_or_insert(std::move(entry));
+
+    CacheEntry *cache_entry = p.first;
+    const bool is_in_table = p.second;
+
+    if (is_in_table){
+      do_mru(cache_entry);
+      mtx.unlock();
+      unique_lock lock(cache_entry->mtx());
+      cache_entry->waiting_cv().wait(lock, [cache_entry] 
+      { 
+        return cache_entry->status() != CacheEntry::Status::CALCULATING; 
+      });
+      return cache_entry;
+    }
 
     // TODO: since the entry could already exist (allocated by another thread), we
     // need to handle the case where the entry is already in the hash table. We can
@@ -624,7 +639,6 @@ class Cache
 
     scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
-    cout << "...CALCULATING" << endl;
 
     if (miss_handler(cache_entry->key(), &cache_entry->data(),
                      cache_entry->ad_hoc_code()))
