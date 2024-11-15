@@ -100,7 +100,8 @@ TEST(cache_entry, data_move_works)
 
 struct SimpleFixture : public Test
 {
-  static bool miss_handler(const int &key, int *data, void *user_data)
+  static bool miss_handler(const int &key, int *data, int8_t &ad_hoc_code,
+                           void *user_data)
   {
     *data = key * 10;
     return true;

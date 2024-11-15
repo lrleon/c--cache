@@ -486,7 +486,7 @@ class Cache
   static constexpr float HashTableRatio = 1.3f;
 
   using MissHandler =
-    std::function<bool(const Key &, Data *, uint8_t & ad_hoc_status, void *)>;
+    std::function<bool(const Key &, Data *, int8_t & ad_hoc_status, void *)>;
 
   MissHandler miss_handler;
 
@@ -642,7 +642,7 @@ class Cache
     if (cache_entry != nullptr)
       {
         unique_lock entry_lock(cache_entry->mtx());
-        pair<const Data *, int8_t> ret = {nullptr, cache_entry->get_ad_hoc_code()};
+        pair<const Data *, int8_t> ret = {nullptr, cache_entry->ad_hoc_code()};
         switch (cache_entry->status())
           {
             case CacheEntry::Status::AVAILABLE:
@@ -653,7 +653,7 @@ class Cache
             case CacheEntry::Status::CALCULATING:
               // wait for the data to be ready
               cache_entry->waiting_cv().wait(entry_lock);
-            ret.second = cache_entry->get_ad_hoc_code();
+            ret.second = cache_entry->ad_hoc_code();
             case CacheEntry::Status::READY:
               ret.first = &cache_entry->get_data();
             case CacheEntry::Status::FAILED:
