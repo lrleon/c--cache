@@ -554,11 +554,34 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 
 struct CompressionFixture : public Test
 {
+  static vector<char> random_string(size_t length) {
+    const vector<string> patterns = {
+      "ab", "cd", "ef", "gh", "ij", "kl", "mn", "op", "qr", "st", "uv", "wx", "yz",
+      "AB", "CD", "EF", "GH", "IJ", "KL", "MN", "OP", "QR", "ST", "UV", "WX", "YZ",
+      "01", "23", "45", "67", "89", "!@", "#$", "%^", "&*", "()", "{}", "[]", "<>", "?/", "\\|"
+      "az", "by", "cx", "dw", "ev", "fu", "gt", "hs", "ir", "jq", "kp", "lo", "mn",
+      "ZA", "YB", "XC", "WD", "VE", "UF", "TG", "SH", "RI", "QJ", "PK", "OL", "NM",
+      "10", "32", "54", "76", "98", "@!", "$#", "^%", "*&", "()", "}{", "][", "/?", "|\\"
+    }; // Multiple patterns
+    vector<char> str(length, 0);
+    
+    size_t pattern_index = 0;
+    for (size_t i = 0; i < length; ++i) {
+        const string& current_pattern = patterns[pattern_index];
+        str[i] = current_pattern[i % current_pattern.size()];
+        
+        if (i % current_pattern.size() == 0) {
+            pattern_index = (pattern_index + 1) % patterns.size(); // Switch patterns
+        }
+    }
+    
+    return str;
+  }
   class ComplexData : public Serializable
   {
   public:
     int id;
-    vector<char> vec = vector<char>(1000, 'X');
+    vector<char> vec = vector<char>();
 
     ComplexData() = default;
     ComplexData(int i) : id(i) {}
@@ -583,6 +606,7 @@ struct CompressionFixture : public Test
                            int8_t &ad_hoc_code)
   {
     data->id = key * 10;
+    data->vec = random_string(1000000);
     ++ad_hoc_code; // never must be greater than 1
     sleep(2);
     return true;
@@ -600,7 +624,11 @@ struct CompressionFixture : public Test
 TEST_F(CompressionFixture, basic_compression)
 {
   using CacheEntry = Cache<int, ComplexData>::CacheEntry;
-  CacheEntry entry(1, ComplexData(10));
+  auto complex_data = ComplexData(10);
+  auto original_vec = random_string(100000);
+  complex_data.vec = vector<char>(original_vec.begin(), original_vec.end());
+  CacheEntry entry(1, move(complex_data));
+  // cout << "Original vec: " << string(original_vec.begin(), original_vec.end()) << endl;
   entry.compress();
 
   ASSERT_EQ(entry.data(), nullptr);
@@ -614,7 +642,7 @@ TEST_F(CompressionFixture, basic_compression)
   ASSERT_NE(entry.data(), nullptr);
   ASSERT_EQ(entry.compressed_data().size(), 0);
   ASSERT_EQ(entry.get_data().id, 10);
-  ASSERT_EQ(entry.get_data().vec.size(), 1000);
+  ASSERT_EQ(entry.get_data().vec, original_vec);
 }
 
 TEST_F(CompressionFixture, retrieve_with_compression)
@@ -636,6 +664,71 @@ TEST_F(CompressionFixture, retrieve_with_compression)
       ASSERT_EQ(res.first->id, 10 + i);
       ASSERT_EQ(res.second, 1);
     }
+}
+
+
+TEST_F(CompressionFixture, two_threads_with_compression)
+{
+  auto future1 = std::async(std::launch::async, [this]()
+  {
+    return cache.retrieve_from_cache_or_compute(1);
+  });
+
+  auto future2 = std::async(std::launch::async, [this]()
+  {
+    return cache.retrieve_from_cache_or_compute(1);
+  });
+
+  auto res1 = future1.get();
+  auto res2 = future2.get();
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+
+  ASSERT_EQ(res1.first->id, 10);
+  ASSERT_EQ(res1.second, 1);
+
+  ASSERT_EQ(res1.first->id, res2.first->id); // same address
+  ASSERT_EQ(res1.second, res2.second);
+
+}
+
+TEST_F(CompressionFixture, multithread_cache_full_with_compression)
+{
+  constexpr int N = 3;
+  vector<future<pair<ComplexData *, int8_t>>> futures;
+
+  for (int i = 1; i <= 5; ++i)
+    {
+      for (int j = 0; j < N; ++j)
+        {
+          futures.push_back(std::async(std::launch::async, [this, i]()
+          {
+            return cache.retrieve_from_cache_or_compute(i);
+          }));
+        }
+    }
+
+  vector<pair<ComplexData *, int8_t>> results;
+  for (int i = 0; i < N * 5; ++i)
+    results.push_back(futures[i].get());
+
+  ASSERT_EQ(cache.size(), 5);
+
+  for (int i = 1; i <= 5; ++i)
+    ASSERT_TRUE(cache.has(i));
+
+  for (int i = 0; i < N * 5; i += N)
+    {
+      auto res_i = results[i];
+      for (int j = 1; j < N; ++j)
+        {
+          auto res_j = results[i + j];
+          ASSERT_EQ(res_i.first->id, res_j.first->id); // same address
+          ASSERT_EQ(res_i.second, res_j.second);
+        }
+    }
+
 }
 
 
