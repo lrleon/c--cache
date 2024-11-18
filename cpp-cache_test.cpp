@@ -167,7 +167,7 @@ TEST_F(SimpleFixture, lru)
 
 TEST_F(SimpleFixture, insert_with_has_and_touch)
 {
-  ASSERT_NE(cache.insert(1, 10), nullptr)
+  ASSERT_TRUE(cache.insert(1, 10))
             << "It should be able to insert a key-value pair";
 
   ASSERT_TRUE(cache.has(1))
@@ -597,21 +597,31 @@ struct CompressionFixture : public Test
   }
 };
 
-TEST_F(CompressionFixture, insert)
+TEST_F(CompressionFixture, basic_compression)
 {
   using CacheEntry = Cache<int, ComplexData>::CacheEntry;
   CacheEntry entry(1, ComplexData(10));
-  auto cache_entry = cache.insert_in_hash_table(move(entry),
-                    high_resolution_clock::now());
-  
-  ASSERT_EQ(cache.size(), 1);
-  ASSERT_TRUE(cache.has(1));
+  entry.compress();
 
-  ASSERT_EQ(cache_entry->data(), nullptr);
-  ASSERT_NE(cache_entry->get_compressed_data().size(), 0);
+  ASSERT_EQ(entry.data(), nullptr);
+  ASSERT_NE(entry.compressed_data().size(), 0);
+  cout << "Original data size: " << entry.original_data_size() << endl;
+  cout << "Compressed data size: " << entry.compressed_data().size() << endl;
+  ASSERT_GT(entry.original_data_size(), entry.compressed_data().size());
+
+  entry.decompress();
+
+  ASSERT_NE(entry.data(), nullptr);
+  ASSERT_EQ(entry.compressed_data().size(), 0);
+  ASSERT_EQ(entry.get_data().id, 10);
+  ASSERT_EQ(entry.get_data().vec.size(), 1000);
 }
 
+TEST_F(CompressionFixture, retrieve_with_compression)
+{
+  ASSERT_TRUE(false);
 
+}
 
 
 

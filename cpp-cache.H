@@ -62,7 +62,8 @@ class Cache
   FRIEND_TEST(cache_entry, data_move_works);
   FRIEND_TEST(SimpleFixture, get_cache_entry);
   FRIEND_TEST(TimeConsumingFixture, calculating_status_while_computing);
-  FRIEND_TEST(CompressionFixture, insert);
+  FRIEND_TEST(CompressionFixture, basic_compression);
+  FRIEND_TEST(CompressionFixture, retrieve_with_compression);
 
   class Entry
   {
@@ -71,6 +72,7 @@ class Cache
     Key _key;
     Data * _data = nullptr;
     vector<char> _compressed_data = vector<char>();
+    int _original_data_size = 0;
 
    public:
 
@@ -88,14 +90,16 @@ class Cache
 
     Entry(const Entry &other)
       : _key(other._key), _data(other._data), 
-        _compressed_data(other._compressed_data)
+        _compressed_data(other._compressed_data),
+        _original_data_size(other._original_data_size)
     {
       // empty
     }
 
     Entry(Entry &&other) noexcept
       : _key(std::move(other._key)), _data(std::move(other._data)),
-        _compressed_data(std::move(other._compressed_data))
+        _compressed_data(std::move(other._compressed_data)),
+        _original_data_size(other._original_data_size)
     {
       // empty
     }
@@ -108,6 +112,7 @@ class Cache
       _key = other._key;
       _data = other._data;
       _compressed_data = other._compressed_data;
+      _original_data_size = other._original_data_size;
 
       return *this;
     }
@@ -120,6 +125,7 @@ class Cache
       _key = std::move(other._key);
       _data = std::move(other._data);
       _compressed_data = std::move(other._compressed_data);
+      _original_data_size =  std::move(other._original_data_size);
 
       return *this;
     }
@@ -132,7 +138,7 @@ class Cache
 
     Data* data() { return _data; }
 
-    vector<char> get_compressed_data() const { return _compressed_data; }
+    vector<char>& compressed_data() { return _compressed_data; }
 
     void set_key(const Key &k) { _key = k; }
 
@@ -152,6 +158,8 @@ class Cache
     {
       _compressed_data = compressed_data;
     }
+
+    int& original_data_size() { return _original_data_size; }
 
     void swap(Entry &other) noexcept
     {
@@ -361,6 +369,55 @@ class Cache
     {
       _negative_ttl_exp_time = exp_time;
     }
+
+    Data * compress()
+    {
+      vector<char> serialized_data;
+      if constexpr (std::is_class_v<Data> && requires(Data d) { { d.serialize() } -> std::same_as<vector<char>>; }) {
+        serialized_data = this->data()->serialize();
+      } else {
+        TypeWrapper<Data> data_wrapper(*this->data());
+        serialized_data = data_wrapper.serialize();
+      }
+      Data* calc_data = this->data();
+      this->set_data(nullptr);
+      this->original_data_size() = serialized_data.size();
+
+      lz4_compress(serialized_data, this->compressed_data());
+
+      assert(this->compressed_data().size() > 0);
+      assert(this->data() == nullptr);
+      assert(this->original_data_size() > 0);
+
+      return calc_data;
+    }
+
+    Data * decompress()
+    {
+      if (this->compressed_data().size() == 0)
+        return nullptr;
+
+      if (this->data() == nullptr)
+        this->set_data(new Data());
+
+      vector<char> decompressed_data = vector<char>(this->original_data_size());
+      lz4_decompress(this->compressed_data(), decompressed_data);
+      if constexpr (std::is_class_v<Data> && requires(Data d) { d.deserialize(std::declval<const vector<char>&>()); }) {
+        this->data()->deserialize(decompressed_data);
+      } else {
+        TypeWrapper<Data> data_wrapper;
+        data_wrapper.deserialize(decompressed_data);
+      }
+
+      this->original_data_size() = 0;
+      this->compressed_data().clear();
+
+      assert (this->data() != nullptr);
+      assert (this->compressed_data().size() == 0);
+      assert (this->original_data_size() == 0);
+
+      return this->data();
+    }
   }; // end class CacheEntry
 
  private:
@@ -495,20 +552,7 @@ class Cache
         return cache_entry->status() != CacheEntry::Status::CALCULATING; 
       });
       return cache_entry;
-    }
-
-    if (compression())
-    {
-      vector<char> compressed_data;
-      if constexpr (std::is_class_v<Data> && requires(Data d) { { d.serialize() } -> std::same_as<vector<char>>; }) {
-        compressed_data = entry.data()->serialize();
-      } else {
-        TypeWrapper<Data> data_wrapper(*entry.data());
-        compressed_data = data_wrapper.serialize();
-      }
-      entry.set_data(nullptr);
-      entry.set_compressed_data(compressed_data);
-    }
+    }      
 
     cache_entry = hash_table.insert(std::move(entry));
 
@@ -586,7 +630,8 @@ class Cache
 
   // Insert a pair <key, data> into the cache. If successful, it returns a pointer
   // to the data in the cache. Otherwise, it returns nullptr.
-  Data * insert(Key &&key, Data &&data)
+  // TODO: may return cache entry directly
+  bool insert(Key &&key, Data &&data)
   {
     assert(hash_table.size() <= cache_size);
 
@@ -597,10 +642,12 @@ class Cache
     auto cache_entry = insert_in_hash_table(std::move(entry),
                                             high_resolution_clock::now());
 
-    if (cache_entry == nullptr)
-      return nullptr;
+    // if (cache_entry == nullptr)
+    //   return nullptr;
 
-    return cache_entry->data();
+    // return cache_entry->data();
+
+    return cache_entry != nullptr;
   }
 
   bool has(const Key &key)
@@ -688,15 +735,22 @@ class Cache
     if (cache_entry->data() == nullptr)
       cache_entry->set_data(Data());
 
+    auto status = cache_entry->status();
     if (miss_handler(cache_entry->key(), cache_entry->data(),
                      cache_entry->ad_hoc_code()))
-      cache_entry->set_status(CacheEntry::Status::READY);
+      status = CacheEntry::Status::READY;
     else
-      cache_entry->set_status(CacheEntry::Status::FAILED);
+      status = CacheEntry::Status::FAILED;
+
+    Data * data = cache_entry->data();
+    if (compression())
+      data = cache_entry->compress();
+
+    cache_entry->set_status(status);
 
     cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with key
 
-    return make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
+    return make_pair(data, cache_entry->ad_hoc_code());
   }
 
  public:
@@ -787,7 +841,7 @@ class Cache
       CacheEntry & cache_entry =
         OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
-      return make_pair(cache_entry.key(), &cache_entry.data());
+      return make_pair(cache_entry.key(), cache_entry.data());
     }
   };
 
