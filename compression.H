@@ -28,10 +28,35 @@ T deserializeWithCereal(const vector<char>& byteArray) {
 }
 
 class Serializable {
-    public:
-        virtual vector<char> serialize() const = 0;
-        virtual void deserialize(const vector<char>& data) = 0;
-        virtual ~Serializable() = default;
+  public:
+    virtual vector<char> serialize() const = 0;
+    virtual void deserialize(const vector<char>& data) = 0;
+    virtual ~Serializable() = default;
+};
+
+// implement serializable interface for native types (int, float, double, etc.)
+template <class T>
+class TypeWrapper : Serializable {
+  T value;
+  public:
+    TypeWrapper(const T& value) : value(value) {}
+    TypeWrapper() {}
+    operator T() const { return value; }
+    TypeWrapper& operator=(const T& value) { this->value = value; return *this; }
+    
+    template<class Archive>
+    void serialize(Archive& archive) {
+      archive(value);
+    }
+
+    vector<char> serialize() const override {
+      return serializeWithCereal(*this);
+    }
+
+    void deserialize(const vector<char>& data) override {
+      *this = deserializeWithCereal<TypeWrapper<T>>(data);
+    }
+  
 };
 
 

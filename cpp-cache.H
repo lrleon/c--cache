@@ -62,36 +62,40 @@ class Cache
   FRIEND_TEST(cache_entry, data_move_works);
   FRIEND_TEST(SimpleFixture, get_cache_entry);
   FRIEND_TEST(TimeConsumingFixture, calculating_status_while_computing);
+  FRIEND_TEST(CompressionFixture, insert);
 
   class Entry
   {
    private:
 
     Key _key;
-    Data _data;
+    Data * _data = nullptr;
+    vector<char> _compressed_data = vector<char>();
 
    public:
 
-    Entry(const Key &k, const Data &d)
-      : _key(k), _data(d)
+    Entry(const Key &k)
+      : _key(k)
     {
       // empty
     }
 
-    Entry(Key &&k, Data &&d)
-      : _key(std::move(k)), _data(std::move(d))
+    Entry(Key &&k)
+      : _key(std::move(k))
     {
       // empty
     }
 
     Entry(const Entry &other)
-      : _key(other._key), _data(other._data)
+      : _key(other._key), _data(other._data), 
+        _compressed_data(other._compressed_data)
     {
       // empty
     }
 
     Entry(Entry &&other) noexcept
-      : _key(std::move(other._key)), _data(std::move(other._data))
+      : _key(std::move(other._key)), _data(std::move(other._data)),
+        _compressed_data(std::move(other._compressed_data))
     {
       // empty
     }
@@ -103,6 +107,7 @@ class Cache
 
       _key = other._key;
       _data = other._data;
+      _compressed_data = other._compressed_data;
 
       return *this;
     }
@@ -114,6 +119,7 @@ class Cache
 
       _key = std::move(other._key);
       _data = std::move(other._data);
+      _compressed_data = std::move(other._compressed_data);
 
       return *this;
     }
@@ -122,21 +128,37 @@ class Cache
 
     const Key &key() const { return _key; }
 
-    Data &data() { return _data; }
+    const Data &get_data() const { return *_data; }
+
+    Data* data() { return _data; }
+
+    vector<char> get_compressed_data() const { return _compressed_data; }
 
     void set_key(const Key &k) { _key = k; }
 
-    void set_data(const Data &d) { _data = d; }
-
     void set_key(Key &&k) { _key = std::move(k); }
 
-    void set_data(Data &&d) { _data = std::move(d); }
+    void set_data(const Data & d) {
+      _data = new Data(d);
+    }    
+
+    void set_data(Data && d) { 
+      _data = new Data(std::move(d));
+    }
+
+    void set_data(Data * d) { _data = d; }
+
+    void set_compressed_data(const vector<char> &compressed_data)
+    {
+      _compressed_data = compressed_data;
+    }
 
     void swap(Entry &other) noexcept
     {
       using std::swap;
       swap(this->_key, other._key);
       swap(this->_data, other._data);
+      swap(this->_compressed_data, other._compressed_data);
     }
 
     friend void swap(Entry &lhs, Entry &rhs) noexcept
@@ -144,6 +166,7 @@ class Cache
       using std::swap;
       swap(lhs._key, rhs._key);
       swap(lhs._data, rhs._data);
+      swap(lhs._compressed_data, rhs._compressed_data);
     }
 
     // assuming data is a pointer to the field _data of Entry class,
@@ -204,16 +227,22 @@ class Cache
 
     CacheEntry() = default;
 
-    CacheEntry(const Key &k, const Data &d = Data())
-      : Entry(k, d)
+    CacheEntry(const Key &k)
+      : Entry(k)
     {
       // empty
     }
 
-    CacheEntry(Key &&k, Data &&d = Data())
-      : Entry(std::move(k), std::move(d))
+    CacheEntry(Key &&k)
+      : Entry(std::move(k))
     {
       // empty
+    }
+
+    CacheEntry(Key &&k, Data &&d)
+      : Entry(std::move(k))
+    {
+      this->set_data(std::move(d));
     }
 
     CacheEntry(const CacheEntry &other)
@@ -287,8 +316,6 @@ class Cache
     }
 
     size_t key_hash() const { return key_hash_fct(this->key()); }
-
-    Data &get_data() { return this->data(); }
 
     Dlink *link_lru() { return &_dlink_lru; }
 
@@ -364,6 +391,8 @@ class Cache
 
   mutex mtx; // protects the cache
 
+  bool _compression = false;
+
  protected:
 
   LINKNAME_TO_TYPE(CacheEntry, _dlink_lru);
@@ -436,6 +465,8 @@ class Cache
     return cache_entry;
   }
 
+  bool & compression() { return _compression; }
+
   CacheEntry *
   insert_in_hash_table(CacheEntry &&entry,
                        const high_resolution_clock::time_point &time_now)
@@ -449,12 +480,13 @@ class Cache
     assert(hash_table.size() < cache_size);
 
     // CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
-    auto p = hash_table.contains_or_insert(std::move(entry));
+    // auto p = hash_table.contains_or_insert(std::move(entry));
 
-    CacheEntry *cache_entry = p.first;
-    const bool is_in_table = p.second;
+    CacheEntry *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
+    // const bool is_in_table = p.second;
 
-    if (is_in_table){
+    if (cache_entry != nullptr)
+    {
       do_mru(cache_entry);
       mtx.unlock();
       unique_lock lock(cache_entry->mtx());
@@ -465,9 +497,20 @@ class Cache
       return cache_entry;
     }
 
-    // TODO: since the entry could already exist (allocated by another thread), we
-    // need to handle the case where the entry is already in the hash table. We can
-    // identify this case if the entry is nullptr
+    if (compression())
+    {
+      vector<char> compressed_data;
+      if constexpr (std::is_class_v<Data> && requires(Data d) { { d.serialize() } -> std::same_as<vector<char>>; }) {
+        compressed_data = entry.data()->serialize();
+      } else {
+        TypeWrapper<Data> data_wrapper(*entry.data());
+        compressed_data = data_wrapper.serialize();
+      }
+      entry.set_data(nullptr);
+      entry.set_compressed_data(compressed_data);
+    }
+
+    cache_entry = hash_table.insert(std::move(entry));
 
     assert(cache_entry != nullptr);
 
@@ -526,7 +569,8 @@ class Cache
   Cache(size_t size,
         const seconds &positive_ttl,
         const seconds &negative_ttl,
-        MissHandlerType miss_handler)
+        MissHandlerType miss_handler,
+        bool compression = false )
     : cache_size(size),
       hash_table(static_cast<size_t>(HashTableRatio * size),
                  cache_entry_hash_fct,
@@ -535,7 +579,7 @@ class Cache
                  hash_default_upper_alpha,
                  false),
       positive_ttl(positive_ttl), negative_ttl(negative_ttl),
-      miss_handler(miss_handler)
+      miss_handler(miss_handler), _compression(compression)
   {
     assert(size > 1);
   }
@@ -556,7 +600,7 @@ class Cache
     if (cache_entry == nullptr)
       return nullptr;
 
-    return &cache_entry->get_data();
+    return cache_entry->data();
   }
 
   bool has(const Key &key)
@@ -612,7 +656,7 @@ class Cache
 
     auto *cache_entry = (this->*get_entry)();
 
-    return make_pair(cache_entry->key(), cache_entry->data());
+    return make_pair(cache_entry->key(), *cache_entry->data());
   }
 
  public:
@@ -641,7 +685,10 @@ class Cache
     scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
 
-    if (miss_handler(cache_entry->key(), &cache_entry->data(),
+    if (cache_entry->data() == nullptr)
+      cache_entry->set_data(Data());
+
+    if (miss_handler(cache_entry->key(), cache_entry->data(),
                      cache_entry->ad_hoc_code()))
       cache_entry->set_status(CacheEntry::Status::READY);
     else
@@ -649,7 +696,7 @@ class Cache
 
     cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with key
 
-    return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
+    return make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
   }
 
  public:
@@ -683,7 +730,7 @@ class Cache
               assert(cache_entry->status() == CacheEntry::Status::READY or
                      cache_entry->status() == CacheEntry::Status::FAILED);           ret.second = cache_entry->ad_hoc_code();
             case CacheEntry::Status::READY:
-              ret.first = &cache_entry->get_data();
+              ret.first = cache_entry->data();
             case CacheEntry::Status::FAILED:
               if (auto time_now = high_resolution_clock::now();
                 verify_entry_ttl_expired(cache_entry, time_now))
