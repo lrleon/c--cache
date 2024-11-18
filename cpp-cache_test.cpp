@@ -619,8 +619,23 @@ TEST_F(CompressionFixture, basic_compression)
 
 TEST_F(CompressionFixture, retrieve_with_compression)
 {
-  ASSERT_TRUE(false);
+  auto res = cache.retrieve_from_cache_or_compute(1);
 
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(res.first->id, 10);
+  ASSERT_EQ(res.second, 1);
+
+  for (int i = 1; i < 10; ++i)
+    {
+      res = cache.retrieve_from_cache_or_compute(1);
+
+      ASSERT_EQ(cache.size(), 1);
+      ASSERT_TRUE(cache.has(1));
+      res.first->id++;
+      ASSERT_EQ(res.first->id, 10 + i);
+      ASSERT_EQ(res.second, 1);
+    }
 }
 
 

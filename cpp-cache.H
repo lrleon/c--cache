@@ -372,6 +372,7 @@ class Cache
 
     Data * compress()
     {
+      cout << "Compressing data" << endl;
       vector<char> serialized_data;
       if constexpr (std::is_class_v<Data> && requires(Data d) { { d.serialize() } -> std::same_as<vector<char>>; }) {
         serialized_data = this->data()->serialize();
@@ -394,6 +395,7 @@ class Cache
 
     Data * decompress()
     {
+      cout << "Decompressing data" << endl;
       if (this->compressed_data().size() == 0)
         return nullptr;
 
@@ -784,6 +786,8 @@ class Cache
               assert(cache_entry->status() == CacheEntry::Status::READY or
                      cache_entry->status() == CacheEntry::Status::FAILED);           ret.second = cache_entry->ad_hoc_code();
             case CacheEntry::Status::READY:
+              if(compression())
+                cache_entry->decompress();
               ret.first = cache_entry->data();
             case CacheEntry::Status::FAILED:
               if (auto time_now = high_resolution_clock::now();
