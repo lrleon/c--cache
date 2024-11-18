@@ -49,7 +49,7 @@ using namespace std::chrono;
    replacement by lru policy.
 */
 
-template<class Key, class Data, class Cmp = std::equal_to<Key>, typename ... Args>
+template <class Key, class Data, class Cmp = std::equal_to<Key>, typename ... Args>
 class Cache
 {
   FRIEND_TEST(SimpleFixture, basic);
@@ -148,7 +148,7 @@ class Cache
 
     // assuming data is a pointer to the field _data of Entry class,
     // it returns a pointer to Entry
-    static Entry * to_Entry(Data & data)
+    static Entry *to_Entry(Data &data)
     {
       return reinterpret_cast<Entry *>(reinterpret_cast<char *>(&data) - offsetof(Entry, _data));
     }
@@ -170,12 +170,11 @@ class Cache
     uint8_t _status = static_cast<uint8_t>(Status::AVAILABLE); // status of the cache entry (AVAILABLE, CALCULATING, READY, FAILED)
     int8_t _ad_hoc_code = 0; // ad hoc code to be used by the user for indicating their own codes
 
-    time_point<high_resolution_clock> _positive_ttl_exp_time; // when positive ttl expires
-    time_point<high_resolution_clock> _negative_ttl_exp_time; // when negative ttl expires
+    time_point<high_resolution_clock> _ttl_exp_time; // when positive ttl expires
 
    public:
 
-    static CacheEntry * to_CacheEntry(Data & data)
+    static CacheEntry *to_CacheEntry(Data &data)
     {
       return reinterpret_cast<CacheEntry *>(Entry::to_Entry(data));
     }
@@ -219,8 +218,7 @@ class Cache
     CacheEntry(const CacheEntry &other)
       : Entry(other), _dlink_lru(other._dlink_lru),
         _status(other._status), _ad_hoc_code(other._ad_hoc_code),
-        _positive_ttl_exp_time(other._positive_ttl_exp_time),
-        _negative_ttl_exp_time(other._negative_ttl_exp_time)
+        _ttl_exp_time(other._ttl_exp_time)
     {
       // empty
     }
@@ -228,8 +226,7 @@ class Cache
     CacheEntry(CacheEntry &&other) noexcept
       : Entry(std::move(other)), _dlink_lru(std::move(other._dlink_lru)),
         _status(other._status), _ad_hoc_code(other._ad_hoc_code),
-        _positive_ttl_exp_time(other._positive_ttl_exp_time),
-        _negative_ttl_exp_time(other._negative_ttl_exp_time)
+        _ttl_exp_time(other._ttl_exp_time)
     {
       // empty
     }
@@ -243,8 +240,7 @@ class Cache
       _dlink_lru = other._dlink_lru;
       _status = other._status;
       _ad_hoc_code = other._ad_hoc_code;
-      _positive_ttl_exp_time = other._positive_ttl_exp_time;
-      _negative_ttl_exp_time = other._negative_ttl_exp_time;
+      _ttl_exp_time = other._ttl_exp_time;
 
       return *this;
     }
@@ -258,8 +254,7 @@ class Cache
       _dlink_lru = std::move(other._dlink_lru);
       _status = other._status;
       _ad_hoc_code = other._ad_hoc_code;
-      _positive_ttl_exp_time = other._positive_ttl_exp_time;
-      _negative_ttl_exp_time = other._negative_ttl_exp_time;
+      _ttl_exp_time = other._ttl_exp_time;
 
       return *this;
     }
@@ -282,8 +277,7 @@ class Cache
       std::swap(this->_dlink_lru, other._dlink_lru);
       std::swap(this->_status, other._status);
       std::swap(this->_ad_hoc_code, other._ad_hoc_code);
-      std::swap(this->_positive_ttl_exp_time, other._positive_ttl_exp_time);
-      std::swap(this->_negative_ttl_exp_time, other._negative_ttl_exp_time);
+      std::swap(this->_ttl_exp_time, other._ttl_exp_time);
     }
 
     size_t key_hash() const { return key_hash_fct(this->key()); }
@@ -303,36 +297,22 @@ class Cache
       _status = static_cast<uint8_t>(status);
     }
 
-    int8_t & ad_hoc_code() { return _ad_hoc_code; }
+    int8_t &ad_hoc_code() { return _ad_hoc_code; }
 
-    time_point<high_resolution_clock> positive_ttl_exp_time() const noexcept
+    time_point<high_resolution_clock> ttl_exp_time() const noexcept
     {
-      return _positive_ttl_exp_time;
+      return _ttl_exp_time;
     }
 
-    time_point<high_resolution_clock> negative_ttl_exp_time() const noexcept
+    bool ttl_expired(const high_resolution_clock::time_point &now) const
     {
-      return _negative_ttl_exp_time;
+      auto ret = now > _ttl_exp_time;
+      return ret;
     }
 
-    bool positive_ttl_expired(const high_resolution_clock::time_point &now) const
+    void set_ttl_exp_time(const time_point<high_resolution_clock> &exp_time)
     {
-      return now > positive_ttl_exp_time();
-    }
-
-    bool negative_ttl_expired(const high_resolution_clock::time_point &now) const
-    {
-      return now > negative_ttl_exp_time();
-    }
-
-    void set_positive_ttl_exp_time(const time_point<high_resolution_clock> &exp_time)
-    {
-      _positive_ttl_exp_time = exp_time;
-    }
-
-    void set_negative_ttl_exp_time(const time_point<high_resolution_clock> &exp_time)
-    {
-      _negative_ttl_exp_time = exp_time;
+      _ttl_exp_time = exp_time;
     }
   }; // end class CacheEntry
 
@@ -405,6 +385,7 @@ class Cache
   */
   void remove_entry_from_hash_table(CacheEntry *cache_entry)
   {
+    cache_entry->set_status(CacheEntry::Status::AVAILABLE);
     cache_entry->link_lru()->del();
 
     hash_table.remove(*cache_entry);
@@ -448,22 +429,26 @@ class Cache
 
     assert(hash_table.size() < cache_size);
 
-    // CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
     auto p = hash_table.contains_or_insert(std::move(entry));
 
     CacheEntry *cache_entry = p.first;
     const bool is_in_table = p.second;
 
-    if (is_in_table){
-      do_mru(cache_entry);
-      mtx.unlock();
-      unique_lock lock(cache_entry->mtx());
-      cache_entry->waiting_cv().wait(lock, [cache_entry] 
-      { 
-        return cache_entry->status() != CacheEntry::Status::CALCULATING; 
-      });
-      return cache_entry;
-    }
+    if (is_in_table)
+      {
+        do_mru(cache_entry);
+        mtx.unlock();
+        unique_lock lock(cache_entry->mtx());
+        cache_entry->waiting_cv().wait(lock, [cache_entry]
+        {
+          return cache_entry->status() != CacheEntry::Status::CALCULATING;
+        });
+        cache_entry->
+          set_ttl_exp_time(time_now +
+                           (cache_entry->status() == CacheEntry::Status::READY ?
+                           positive_ttl : negative_ttl));
+        return cache_entry;
+      }
 
     // TODO: since the entry could already exist (allocated by another thread), we
     // need to handle the case where the entry is already in the hash table. We can
@@ -473,49 +458,20 @@ class Cache
 
     insert_entry_to_lru_list(cache_entry);
 
-    cache_entry->set_positive_ttl_exp_time(time_now + positive_ttl);
-    cache_entry->set_negative_ttl_exp_time(time_now + negative_ttl);
     cache_entry->set_status(CacheEntry::Status::READY);
+    cache_entry->set_ttl_exp_time(time_now + positive_ttl);
 
     return cache_entry;
   }
 
-  bool verify_entry_ttl_expired(CacheEntry *cache_entry,
-                                const high_resolution_clock::time_point &time_now)
+  // returns true if the entry has expired
+  bool has_entry_ttl_expired(CacheEntry *cache_entry,
+                             const high_resolution_clock::time_point &time_now)
   {
-    switch (cache_entry->status())
-      {
-        case CacheEntry::Status::READY:
-          if (cache_entry->positive_ttl_expired(time_now))
-            {
-              remove_entry_from_hash_table(cache_entry);
-              return false;
-            }
-        break;
-
-        case CacheEntry::Status::FAILED:
-          if (cache_entry->negative_ttl_expired(time_now))
-            {
-              remove_entry_from_hash_table(cache_entry);
-              return false;
-            }
-        break;
-
-        case CacheEntry::Status::CALCULATING:
-        case CacheEntry::Status::AVAILABLE:
-          ah_fatal_error()
-            << "verify_entry_ttl_expired() helper called on an entry with status"
-            << CacheEntry::status_to_string(cache_entry->status()) << endl;
-        break;
-
-        default:
-          return false;
-      }
-
-    return true;
+    return cache_entry->ttl_expired(time_now);
   }
 
-  public:
+ public:
 
   using MissHandlerType = std::function<bool(const Key &, Data *, int8_t &, Args...)>;
 
@@ -542,7 +498,7 @@ class Cache
 
   // Insert a pair <key, data> into the cache. If successful, it returns a pointer
   // to the data in the cache. Otherwise, it returns nullptr.
-  Data * insert(Key &&key, Data &&data)
+  Data *insert(Key &&key, Data &&data)
   {
     assert(hash_table.size() <= cache_size);
 
@@ -573,7 +529,14 @@ class Cache
       return false;
 
     scoped_lock entry_lock(cache_entry->mtx());
-    return verify_entry_ttl_expired(cache_entry, high_resolution_clock::now());
+    auto ret =
+      not has_entry_ttl_expired(cache_entry, high_resolution_clock::now());
+
+    if (ret)
+      return true;
+
+    remove_entry_from_hash_table(cache_entry);
+    return false;
   }
 
   bool touch(const Key &key)
@@ -590,7 +553,7 @@ class Cache
       return false;
 
     scoped_lock entry_lock(cache_entry->mtx());
-    if (verify_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
+    if (not has_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
       {
         do_mru(cache_entry);
         return true;
@@ -629,25 +592,32 @@ class Cache
 
  private:
 
-  pair<Data*, int8_t>
-  resolve_cache_miss(CacheEntry *& cache_entry,
+  pair<Data *, int8_t>
+  resolve_cache_miss(CacheEntry *&cache_entry,
                      const high_resolution_clock::time_point &time_now)
   {
-    { // allocate a new entry in the hash table for key
-      scoped_lock lock(mtx);
-      cache_entry = insert_in_hash_table(move(*cache_entry), time_now);
-    }
-
     scoped_lock entry_lock(cache_entry->mtx());
+    assert(cache_entry->status() == CacheEntry::Status::AVAILABLE);
     cache_entry->set_status(CacheEntry::Status::CALCULATING);
 
     if (miss_handler(cache_entry->key(), &cache_entry->data(),
                      cache_entry->ad_hoc_code()))
-      cache_entry->set_status(CacheEntry::Status::READY);
+      {
+        cache_entry->set_ttl_exp_time(time_now + positive_ttl);
+        cache_entry->set_status(CacheEntry::Status::READY);
+      }
     else
-      cache_entry->set_status(CacheEntry::Status::FAILED);
+      {
+        cache_entry->set_ttl_exp_time(time_now + negative_ttl);
+        cache_entry->set_status(CacheEntry::Status::FAILED);
+      }
 
-    cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with key
+    {
+      scoped_lock lock(mtx);
+      do_mru(cache_entry);
+    }
+
+    cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with the key
 
     return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
   }
@@ -657,50 +627,44 @@ class Cache
   // computed/retrieved data, ad hoc status set by the miss handler
   pair<Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
   {
+    using Status = Cache<Key, Data, Cmp>::CacheEntry::Status;
     assert(hash_table.size() <= cache_size);
 
     CacheEntry entry(key);
-    CacheEntry *cache_entry = nullptr;
 
-    { // 1. Search for the entry in the hash table
-      scoped_lock lock(mtx);
-      cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
-    }
+    // 1. Search for the entry in the hash table
+    mtx.lock();
+    auto p = hash_table.contains_or_insert(entry);
+    bool is_in_table = p.second;
+    auto *cache_entry = static_cast<CacheEntry *>(p.first);
 
-    if (cache_entry != nullptr)
-      { // 2. found!
-        unique_lock entry_lock(cache_entry->mtx());
-        pair<Data *, int8_t> ret = {nullptr, cache_entry->ad_hoc_code()};
-        switch (cache_entry->status()) // check the status of the entry
+    auto time_now = high_resolution_clock::now();
+    if (is_in_table)
+      {
+        if (not has_entry_ttl_expired(cache_entry, time_now))
           {
-            case CacheEntry::Status::AVAILABLE: // should not happen
-              ah_fatal_error()
-                << "retrieve_from_cache_or_compute() helper called on an entry with status"
-                << CacheEntry::status_to_string(cache_entry->status()) << endl;
-            break;
-            case CacheEntry::Status::CALCULATING:
-              cache_entry->waiting_cv().wait(entry_lock); // wait for the data to be ready
-              assert(cache_entry->status() == CacheEntry::Status::READY or
-                     cache_entry->status() == CacheEntry::Status::FAILED);           ret.second = cache_entry->ad_hoc_code();
-            case CacheEntry::Status::READY:
-              ret.first = &cache_entry->get_data();
-            case CacheEntry::Status::FAILED:
-              if (auto time_now = high_resolution_clock::now();
-                verify_entry_ttl_expired(cache_entry, time_now))
-                do_mru(cache_entry);
-              else
-                ret = resolve_cache_miss(cache_entry, time_now);
-            break;
-            default:
-              ah_fatal_error()
-                << "retrieve_from_cache_or_compute() helper called on an entry with status"
-                << static_cast<int>(cache_entry->status()) << endl;
-            break;
+            do_mru(cache_entry);
+            mtx.unlock();
+            unique_lock entry_lock(cache_entry->mtx());
+            cache_entry->
+              waiting_cv().wait(entry_lock,
+                                [cache_entry]
+                                {
+                                  return not(cache_entry->status() == Status::CALCULATING);
+                                });
+
+            assert(cache_entry->status() == Status::READY or
+                   cache_entry->status() == Status::FAILED);
+
+            return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
           }
-        return ret;
+        else
+          remove_entry_from_hash_table(cache_entry); // mtx is locked
       }
 
-    // 3. If not found ==> compute the data and insert it into the cache
+    // 3. If not found ==> compute the data and write it to the cache_entry, which is
+    //    already in the hash table
+    mtx.unlock();
     cache_entry = &entry;
     return resolve_cache_miss(cache_entry, high_resolution_clock::now());
   }
@@ -729,15 +693,15 @@ class Cache
   // Iterator to traverse the cache. It is not thread-safe.
   struct Iterator : public OLhashTable<CacheEntry, CacheCmp>::Iterator
   {
-    Iterator(Cache & _cache)
-    : OLhashTable<CacheEntry, CacheCmp>::Iterator(_cache.hash_table)
+    Iterator(Cache &_cache)
+      : OLhashTable<CacheEntry, CacheCmp>::Iterator(_cache.hash_table)
     {
       // empty
     }
 
-    pair<const Key&, Data*> get_curr()
+    pair<const Key &, Data *> get_curr()
     {
-      CacheEntry & cache_entry =
+      CacheEntry &cache_entry =
         OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
       return make_pair(cache_entry.key(), &cache_entry.data());

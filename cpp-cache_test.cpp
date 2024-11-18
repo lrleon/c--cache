@@ -36,21 +36,15 @@ TEST(cache_entry, basic)
 
   ASSERT_EQ(cache_entry.ad_hoc_code(), 1);
 
-  cache_entry.set_positive_ttl_exp_time(high_resolution_clock::now() + 1s);
-  cache_entry.set_negative_ttl_exp_time(high_resolution_clock::now() + 2s);
+  cache_entry.set_ttl_exp_time(high_resolution_clock::now() + 1s);
 
-  ASSERT_FALSE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
-  ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
+
+  ASSERT_FALSE(cache_entry.ttl_expired(high_resolution_clock::now()));
 
   // sleep for 1 second
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  ASSERT_TRUE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
-  ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
-
-  sleep(1);
-
-  ASSERT_TRUE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
+  ASSERT_TRUE(cache_entry.ttl_expired(high_resolution_clock::now()));
 
   cout << "CacheEntry: " << cache_entry.get_data() << endl;
 }
@@ -127,21 +121,29 @@ TEST_F(SimpleFixture, basic)
 {
   ASSERT_EQ(cache.capacity(), 5);
   ASSERT_EQ(cache.size(), 0);
+
   //cache is empty
   ASSERT_FALSE(cache.has(1));
+
   //insert a key-value pair
   cache.insert(1, 10);
+
   //cache is not empty
   ASSERT_EQ(cache.size(), 1);
+
   // check lru entry
   ASSERT_EQ(cache.get_lru_entry()->key(), 1);
+
   //key is in cache
   ASSERT_TRUE(cache.has(1));
+
   // wait ttl to expire
   sleep(1);
+
   // key is not in cache
   ASSERT_FALSE(cache.has(1));
-  // check expired key was removed from cache
+
+  // check expired key was removed from the cache
   ASSERT_EQ(cache.size(), 0);
 }
 
@@ -270,7 +272,6 @@ TEST_F(SimpleFixture, cache_is_full)
   }
 
   ASSERT_FALSE(cache.has(1));
-
 }
 
 TEST_F(SimpleFixture, remove)
