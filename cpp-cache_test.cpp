@@ -39,12 +39,12 @@ TEST(cache_entry, basic)
   cache_entry.set_ttl_exp_time(high_resolution_clock::now() + 1s);
 
 
-  ASSERT_FALSE(cache_entry.ttl_expired(high_resolution_clock::now()));
+  ASSERT_FALSE(cache_entry.has_ttl_expired(high_resolution_clock::now()));
 
   // sleep for 1 second
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  ASSERT_TRUE(cache_entry.ttl_expired(high_resolution_clock::now()));
+  ASSERT_TRUE(cache_entry.has_ttl_expired(high_resolution_clock::now()));
 
   cout << "CacheEntry: " << cache_entry.get_data() << endl;
 }

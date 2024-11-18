@@ -304,7 +304,7 @@ class Cache
       return _ttl_exp_time;
     }
 
-    bool ttl_expired(const high_resolution_clock::time_point &now) const
+    bool has_ttl_expired(const high_resolution_clock::time_point &now) const
     {
       auto ret = now > _ttl_exp_time;
       return ret;
@@ -389,6 +389,8 @@ class Cache
     cache_entry->link_lru()->del();
 
     hash_table.remove(*cache_entry);
+
+    cout << "**** key " << cache_entry->key() << " removed from cache" << endl;
   }
 
   /* searches and returns the next entry according to lru priority that does not have
@@ -446,7 +448,7 @@ class Cache
         cache_entry->
           set_ttl_exp_time(time_now +
                            (cache_entry->status() == CacheEntry::Status::READY ?
-                           positive_ttl : negative_ttl));
+                            positive_ttl : negative_ttl));
         return cache_entry;
       }
 
@@ -468,7 +470,7 @@ class Cache
   bool has_entry_ttl_expired(CacheEntry *cache_entry,
                              const high_resolution_clock::time_point &time_now)
   {
-    return cache_entry->ttl_expired(time_now);
+    return cache_entry->has_ttl_expired(time_now);
   }
 
  public:
@@ -528,11 +530,10 @@ class Cache
     if (cache_entry == nullptr)
       return false;
 
-    scoped_lock entry_lock(cache_entry->mtx());
-    auto ret =
-      not has_entry_ttl_expired(cache_entry, high_resolution_clock::now());
+    cout << "key " << key << " found in cache" << endl;
 
-    if (ret)
+    scoped_lock entry_lock(cache_entry->mtx());
+    if (not has_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
       return true;
 
     remove_entry_from_hash_table(cache_entry);
@@ -603,11 +604,13 @@ class Cache
     if (miss_handler(cache_entry->key(), &cache_entry->data(),
                      cache_entry->ad_hoc_code()))
       {
+        cout << "miss handler succeeded" << endl;
         cache_entry->set_ttl_exp_time(time_now + positive_ttl);
         cache_entry->set_status(CacheEntry::Status::READY);
       }
     else
       {
+        cout << "miss handler failed" << endl;
         cache_entry->set_ttl_exp_time(time_now + negative_ttl);
         cache_entry->set_status(CacheEntry::Status::FAILED);
       }
@@ -618,6 +621,8 @@ class Cache
     }
 
     cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with the key
+
+    cout << "resolved cache miss" << endl;
 
     return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
   }
@@ -635,13 +640,15 @@ class Cache
     // 1. Search for the entry in the hash table
     mtx.lock();
     auto p = hash_table.contains_or_insert(entry);
-    bool is_in_table = p.second;
+    const bool is_in_table = p.second;
     auto *cache_entry = static_cast<CacheEntry *>(p.first);
 
     auto time_now = high_resolution_clock::now();
     if (is_in_table)
       {
-        if (not has_entry_ttl_expired(cache_entry, time_now))
+        if (has_entry_ttl_expired(cache_entry, time_now))
+          remove_entry_from_hash_table(cache_entry); // mtx is locked
+        else
           {
             do_mru(cache_entry);
             mtx.unlock();
@@ -658,15 +665,19 @@ class Cache
 
             return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
           }
-        else
-          remove_entry_from_hash_table(cache_entry); // mtx is locked
       }
+
+      // TODO: set ttl_exp_time to time_now + negative_ttl
+
+    cout << "key " << key << " not found in cache" << endl
+         << "cache size: " << hash_table.size() << endl
+         << "calling miss handler" << endl;
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
     mtx.unlock();
     cache_entry = &entry;
-    return resolve_cache_miss(cache_entry, high_resolution_clock::now());
+    return resolve_cache_miss(cache_entry, time_now);
   }
 
   void remove(const Key &key)
