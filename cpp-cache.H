@@ -17,6 +17,7 @@
 #include <utility>
 
 # include <gtest/gtest.h>
+# include "compression.H"
 
 using namespace std;
 using namespace Aleph;
