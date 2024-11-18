@@ -725,21 +725,32 @@ class Cache
     return hash_table.get_num_busy_slots();
   }
 
+  // Iterator to traverse the cache. It is not thread-safe.
   struct Iterator : public OLhashTable<CacheEntry, CacheCmp>::Iterator
   {
-    Iterator(Cache &_cache)
+    Iterator(Cache & _cache)
+    : OLhashTable<CacheEntry, CacheCmp>::Iterator(_cache.hash_table)
     {
-      scoped_lock lock(_cache.mtx);
+      // empty
     }
 
-    pair<const Key&, Data*> *get_curr()
+    pair<const Key&, Data*> get_curr()
     {
-      CacheEntry * cache_entry =
+      CacheEntry & cache_entry =
         OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
-      return {&cache_entry->key(), &cache_entry->data()};
+      return make_pair(cache_entry.key(), &cache_entry.data());
     }
   };
+
+  Iterator get_it()
+  {
+    return Iterator(*this);
+  }
+
+  // Mutex to protect the cache. It could be necessary to protect the cache if
+  // the user wants to use the iterator. Use it at your own risk.
+  mutex &get_mtx() { return mtx; }
 };
 
 #endif // CPP_CACHE_CACHE_H

@@ -8,6 +8,8 @@
 # include <future>
 # include "cpp-cache.H"
 
+# include <tpl_dynMapTree.H>
+
 using namespace std;
 using namespace testing;
 
@@ -320,34 +322,36 @@ TEST_F(SimpleFixture, get_cache_entry)
 
 TEST_F(SimpleFixture, iterator)
 {
+  DynMapTree<int, int> key_value_map = {{1, 10}, {2, 20}, {3, 30}, {4, 40}, {5, 50}};
   cache.insert(1, 10);
   cache.insert(2, 20);
   cache.insert(3, 30);
   cache.insert(4, 40);
   cache.insert(5, 50);
 
-//  auto it = cache.begin();
-//  ASSERT_EQ(it->first, 1);
-//  ASSERT_EQ(it->second, 10);
-//
-//  ++it;
-//  ASSERT_EQ(it->first, 2);
-//  ASSERT_EQ(it->second, 20);
-//
-//  ++it;
-//  ASSERT_EQ(it->first, 3);
-//  ASSERT_EQ(it->second, 30);
-//
-//  ++it;
-//  ASSERT_EQ(it->first, 4);
-//  ASSERT_EQ(it->second, 40);
-//
-//  ++it;
-//  ASSERT_EQ(it->first, 5);
-//  ASSERT_EQ(it->second, 50);
-//
-//  ++it;
-//  ASSERT_EQ(it, cache.end());
+  auto it = cache.get_it();
+  ASSERT_TRUE(it.has_curr());
+  auto kv = key_value_map.search(it.get_curr().first);
+  ASSERT_NE(kv, nullptr);
+  ASSERT_EQ(*it.get_curr().second, kv->second);
+
+  it.next();
+  ASSERT_TRUE(it.has_curr());
+  kv = key_value_map.search(it.get_curr().first);
+  ASSERT_NE(kv, nullptr);
+  ASSERT_EQ(*it.get_curr().second, kv->second);
+
+  it.next();
+  ASSERT_TRUE(it.has_curr());
+  kv = key_value_map.search(it.get_curr().first);
+  ASSERT_NE(kv, nullptr);
+  ASSERT_EQ(*it.get_curr().second, kv->second);
+
+  it.next();
+  ASSERT_TRUE(it.has_curr());
+  kv = key_value_map.search(it.get_curr().first);
+  ASSERT_NE(kv, nullptr);
+  ASSERT_EQ(*it.get_curr().second, kv->second);
 }
 
 struct TimeConsumingFixture : public Test
@@ -463,11 +467,85 @@ TEST_F(TimeConsumingFixture, multithread_cache_full)
 
 }
 
-TEST_F(TimeConsumingFixture, multithread_heavy)
+TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 {
-  ASSERT_TRUE(false);
+  constexpr int N = 100;
+  vector<future<pair<int *, int8_t>>> futures;
+
+  for (int i = 1; i <= 5; ++i)
+  {
+    for (int j = 0; j < N; ++j)
+    {
+      futures.push_back(std::async(std::launch::async, [this, i]()
+      {
+        return cache.retrieve_from_cache_or_compute(i);
+      }));
+    }
+  }
+
+  vector<pair<int *, int8_t>> results;
+  for (int i = 0; i < N*5; ++i)
+    results.push_back(futures[i].get());
+
+  ASSERT_EQ(cache.size(), 5);
+
+  for (int i = 1; i <= 5; ++i)
+    ASSERT_TRUE(cache.has(i));
+
+  for (int i = 0; i < N*5; i += N)
+  {
+    auto res_i = results[i];
+    for (int j = 1; j < N; ++j)
+    {
+      auto res_j = results[i + j];
+      ASSERT_EQ(res_i.first, res_j.first); // same address
+      ASSERT_EQ(res_i.second, res_j.second);
+    }
+  }
 }
 
+TEST_F(TimeConsumingFixture, multithread_heavy_threads)
+{
+constexpr int N = 100;
+  vector<thread> threads;
+  vector<pair<int *, int8_t>> results(N * 5);
+  mutex results_mutex;
+  int result_index = 0;
+
+  for (int i = 1; i <= 5; ++i)
+  {
+    for (int j = 0; j < N; ++j)
+    {
+      threads.emplace_back([this, i, &results, &results_mutex, &result_index]()
+      {
+        auto result = cache.retrieve_from_cache_or_compute(i);
+        {
+          lock_guard<mutex> lock(results_mutex);
+          results[result_index++] = result;
+        }
+      });
+    }
+  }
+
+  for (auto &t : threads)
+    t.join();
+
+  ASSERT_EQ(cache.size(), 5);
+
+  for (int i = 1; i <= 5; ++i)
+    ASSERT_TRUE(cache.has(i));
+
+  for (int i = 0; i < N * 5; i += N)
+  {
+    auto res_i = results[i];
+    for (int j = 1; j < N; ++j)
+    {
+      auto res_j = results[i + j];
+      ASSERT_EQ(res_i.first, res_j.first); // same address
+      ASSERT_EQ(res_i.second, res_j.second);
+    }
+  }
+}
 
 
 
