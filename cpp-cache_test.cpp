@@ -374,7 +374,7 @@ struct TimeConsumingFixture : public Test
   Cache<int, int> cache;
 
   TimeConsumingFixture()
-    : cache(5, 5s, 1s, miss_handler)
+    : cache(5, 3s, 1s, miss_handler)
   {
     // empty
   }
@@ -432,6 +432,7 @@ TEST_F(TimeConsumingFixture, two_threads)
 
   ASSERT_EQ(res1.first, res2.first); // same address
   ASSERT_EQ(res1.second, res2.second);
+
 }
 
 TEST_F(TimeConsumingFixture, multithread_cache_full)

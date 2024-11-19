@@ -201,7 +201,10 @@ class Cache
         }
     }
 
-    CacheEntry() = default;
+    CacheEntry()
+    {
+      assert(_dlink_lru.is_empty());
+    }
 
     CacheEntry(const Key &k, const Data &d = Data())
       : Entry(k, d)
@@ -448,23 +451,62 @@ class Cache
     assert(size > 1);
   }
 
+  private:
+
+  // Assumes that mutex mtx is locked
+  pair<CacheEntry*, bool> contains_or_insert(const Key & key)
+  {
+    assert(hash_table.size() <= cache_size);
+
+    const bool is_cache_full = hash_table.size() == cache_size;
+
+    auto p = hash_table.contains_or_insert(CacheEntry(key));
+
+    CacheEntry *cache_entry = p.first;
+    const bool is_in_table = p.second;
+    if (is_in_table)
+      {
+        do_mru(cache_entry);
+        return p;
+      }
+
+    if (is_cache_full)
+      {
+        CacheEntry *lru_entry = get_lru_entry();
+        remove_entry_from_hash_table(lru_entry);
+        assert(cache_size == hash_table.size());
+      }
+
+    insert_entry_to_lru_list(cache_entry);
+
+    scoped_lock entry_lock(cache_entry->mtx());
+    cache_entry->set_status(CacheEntry::Status::READY);
+    cache_entry->set_ttl_exp_time(high_resolution_clock::now() + positive_ttl);
+
+    return p;
+  }
+
+ public:
+
   // Insert a pair <key, data> into the cache. If successful, it returns a pointer
   // to the data in the cache. Otherwise, it returns nullptr.
   Data *insert(Key &&key, Data &&data)
   {
+    using CacheEntry = Cache<Key, Data, Cmp>::CacheEntry;
     assert(hash_table.size() <= cache_size);
-
-    CacheEntry entry(std::move(key), std::move(data));
 
     scoped_lock lock(mtx);
 
-    auto p = hash_table.contains_or_insert(std::move(entry));
+    auto p = contains_or_insert(move(key)) ;
 
     const bool is_in_table = p.second;
     if (is_in_table)
       return nullptr;
 
     CacheEntry *cache_entry = p.first;
+    cache_entry->set_data(std::move(data));
+
+    assert(cache_entry->link_lru()->is_empty());
 
     insert_entry_to_lru_list(cache_entry);
 
@@ -577,8 +619,10 @@ class Cache
           }
 
         {
+          entry_lock.unlock();
           scoped_lock lock(mtx);
           do_mru(cache_entry);
+          entry_lock.lock();
         }
 
         cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with the key
@@ -623,26 +667,35 @@ class Cache
 
     CacheEntry entry(key);
 
+    // TODO: I need to handle here if the cache is full
     // 1. Search for the entry in the hash table
     mtx.lock();
-    auto p = hash_table.contains_or_insert(entry);
+    auto p = contains_or_insert(key);
+    mtx.unlock();
+
     const bool is_in_table = p.second;
     auto *cache_entry = static_cast<CacheEntry *>(p.first);
-
-    cout << "Cache size = " << hash_table.size() << endl;
 
     auto time_now = high_resolution_clock::now();
     if (is_in_table)
       {
-        mtx.unlock();
-        unique_lock entry_lock(cache_entry->mtx());
-        if (has_entry_ttl_expired(cache_entry, time_now))
-          remove_entry_from_hash_table(cache_entry); // mtx is locked
+        bool I_must_remove_entry = false;
+        {
+          scoped_lock lock(cache_entry->mtx());
+          I_must_remove_entry = has_entry_ttl_expired(cache_entry, time_now);
+        }
+        if (I_must_remove_entry)
+          {
+            scoped_lock lock(mtx);
+            remove_entry_from_hash_table(cache_entry); // mtx is locked
+          }
         else
           {
             mtx.lock();
             do_mru(cache_entry);
             mtx.unlock();
+
+            unique_lock entry_lock(cache_entry->mtx());
             cache_entry->
               waiting_cv().wait(entry_lock,
                                 [cache_entry]
@@ -663,7 +716,6 @@ class Cache
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
-    mtx.unlock();
     return resolve_cache_miss(cache_entry, time_now);
   }
 
