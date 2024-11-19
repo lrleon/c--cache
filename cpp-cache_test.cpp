@@ -554,6 +554,65 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
     }
 }
 
+struct RandomTimeFixture : public Test
+{
+  static bool miss_handler(const int &key, int *data,
+                           int8_t &ad_hoc_code)
+  {
+    *data = key * 10;
+    ++ad_hoc_code; // never must be greater than 1
 
+    // sleep for a random time between 0.5 s and  9.5 s
+    this_thread::sleep_for(chrono::milliseconds(500) +
+                            chrono::milliseconds(rand() % 9000));
+
+    return true;
+  }
+
+  Cache<int, int> cache;
+
+  RandomTimeFixture()
+    : cache(1019, 10s, 1s, miss_handler)
+  {
+    // empty
+  }
+};
+
+TEST_F(RandomTimeFixture, random_miss_handler)
+{
+  constexpr int N = 1000;
+  vector<future<pair<int *, int8_t>>> futures;
+
+  for (int i = 1; i <= 5; ++i)
+    {
+      for (int j = 0; j < N; ++j)
+        {
+          futures.push_back(std::async(std::launch::async, [this, i]()
+          {
+            return cache.retrieve_from_cache_or_compute(i);
+          }));
+        }
+    }
+
+  vector<pair<int *, int8_t>> results;
+  for (int i = 0; i < N * 5; ++i)
+    results.push_back(futures[i].get());
+
+  ASSERT_EQ(cache.size(), 5);
+
+  for (int i = 1; i <= 5; ++i)
+    ASSERT_TRUE(cache.has(i));
+
+  for (int i = 0; i < N * 5; i += N)
+    {
+      auto res_i = results[i];
+      for (int j = 1; j < N; ++j)
+        {
+          auto res_j = results[i + j];
+          ASSERT_EQ(res_i.first, res_j.first); // same address
+          ASSERT_EQ(res_i.second, res_j.second);
+        }
+    }
+}
 
 
