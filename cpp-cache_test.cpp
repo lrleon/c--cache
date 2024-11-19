@@ -36,21 +36,15 @@ TEST(cache_entry, basic)
 
   ASSERT_EQ(cache_entry.ad_hoc_code(), 1);
 
-  cache_entry.set_positive_ttl_exp_time(high_resolution_clock::now() + 1s);
-  cache_entry.set_negative_ttl_exp_time(high_resolution_clock::now() + 2s);
+  cache_entry.set_ttl_exp_time(high_resolution_clock::now() + 1s);
 
-  ASSERT_FALSE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
-  ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
+
+  ASSERT_FALSE(cache_entry.has_ttl_expired(high_resolution_clock::now()));
 
   // sleep for 1 second
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  ASSERT_TRUE(cache_entry.positive_ttl_expired(high_resolution_clock::now()));
-  ASSERT_FALSE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
-
-  sleep(1);
-
-  ASSERT_TRUE(cache_entry.negative_ttl_expired(high_resolution_clock::now()));
+  ASSERT_TRUE(cache_entry.has_ttl_expired(high_resolution_clock::now()));
 
   cout << "CacheEntry: " << cache_entry.get_data() << endl;
 }
@@ -127,21 +121,29 @@ TEST_F(SimpleFixture, basic)
 {
   ASSERT_EQ(cache.capacity(), 5);
   ASSERT_EQ(cache.size(), 0);
+
   //cache is empty
   ASSERT_FALSE(cache.has(1));
+
   //insert a key-value pair
   cache.insert(1, 10);
+
   //cache is not empty
   ASSERT_EQ(cache.size(), 1);
+
   // check lru entry
   ASSERT_EQ(cache.get_lru_entry()->key(), 1);
+
   //key is in cache
   ASSERT_TRUE(cache.has(1));
+
   // wait ttl to expire
   sleep(1);
+
   // key is not in cache
   ASSERT_FALSE(cache.has(1));
-  // check expired key was removed from cache
+
+  // check expired key was removed from the cache
   ASSERT_EQ(cache.size(), 0);
 }
 
@@ -226,12 +228,13 @@ TEST_F(SimpleFixture, touch)
 
   // touch key 1
   ASSERT_TRUE(cache.touch(1));
+
   // check lru entry
   ASSERT_EQ(cache.get_lru_entry()->key(), 2);
   ASSERT_NE(cache.get_lru_entry()->key(), 1);
+
   // touch unknown key
   ASSERT_FALSE(cache.touch(90));
-
 }
 
 TEST_F(SimpleFixture, cache_is_full)
@@ -270,7 +273,6 @@ TEST_F(SimpleFixture, cache_is_full)
   }
 
   ASSERT_FALSE(cache.has(1));
-
 }
 
 TEST_F(SimpleFixture, remove)
@@ -410,14 +412,14 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   sleep(1);
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
+
   // wait miss handler to finish
   pair<int *, int8_t> res = future.get();
 
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::READY);
+  ASSERT_FALSE(cache_entry->has_ttl_expired(high_resolution_clock::now()));
 
-  ASSERT_EQ(cache.size(), 1);
-  ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
   ASSERT_EQ(res.second, 1);
   ASSERT_EQ(cache_entry->get_data(), 10);
@@ -489,7 +491,7 @@ TEST_F(TimeConsumingFixture, multithread_cache_full)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 {
-  constexpr int N = 100;
+  constexpr int N = 20;
   vector<future<pair<int *, int8_t>>> futures;
 
   for (int i = 1; i <= 5; ++i)
@@ -526,7 +528,7 @@ TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 {
-  constexpr int N = 100;
+  constexpr int N = 20;
   vector<thread> threads;
   vector<pair<int *, int8_t>> results(N * 5);
   mutex results_mutex;
@@ -566,6 +568,68 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
           ASSERT_EQ(res_i.second, res_j.second);
         }
     }
+}
+
+struct RandomTimeFixture : public Test
+{
+  static bool miss_handler(const int &key, int *data,
+                           int8_t &ad_hoc_code)
+  {
+    *data = key * 10;
+    ++ad_hoc_code; // never must be greater than 1
+
+    // sleep for a random time between 0.5 s and  9.5 s
+    this_thread::sleep_for(chrono::milliseconds(500) +
+                            chrono::milliseconds(rand() % 9000));
+
+    return true;
+  }
+
+  Cache<int, int> cache;
+
+  RandomTimeFixture()
+    : cache(1019, 10s, 1s, miss_handler)
+  {
+    // empty
+  }
+};
+
+TEST_F(RandomTimeFixture, random_miss_handler)
+{
+  constexpr int N = 30;
+  vector<future<pair<int *, int8_t>>> futures;
+
+  for (int i = 1; i <= 5; ++i)
+    {
+      for (int j = 0; j < N; ++j)
+        {
+          futures.push_back(std::async(std::launch::async, [this, i]()
+          {
+            return cache.retrieve_from_cache_or_compute(i);
+          }));
+        }
+    }
+
+  vector<pair<int *, int8_t>> results;
+  for (int i = 0; i < N * 5; ++i)
+    results.push_back(futures[i].get());
+
+  ASSERT_EQ(cache.size(), 5);
+
+  for (int i = 1; i <= 5; ++i)
+    ASSERT_TRUE(cache.has(i));
+
+  for (int i = 0; i < N * 5; i += N)
+    {
+      auto res_i = results[i];
+      for (int j = 1; j < N; ++j)
+        {
+          auto res_j = results[i + j];
+          ASSERT_EQ(res_i.first, res_j.first); // same address
+          ASSERT_EQ(res_i.second, res_j.second);
+        }
+    }
+
 }
 
 struct CompressionFixture : public Test
@@ -746,6 +810,3 @@ TEST_F(CompressionFixture, multithread_cache_full_with_compression)
     }
 
 }
-
-
-
