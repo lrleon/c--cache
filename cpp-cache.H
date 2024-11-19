@@ -714,11 +714,10 @@ class Cache
 
  private:
 
-  pair<Data *, int8_t>
-  resolve_cache_miss(CacheEntry *cache_entry,
+  Data * resolve_cache_miss(CacheEntry *cache_entry,
                      const high_resolution_clock::time_point &time_now)
   {
-    pair<Data *, int8_t> result;
+    Data * result;
     unique_lock entry_lock(cache_entry->mtx());
 
     if (cache_entry->data() == nullptr)
@@ -740,22 +739,20 @@ class Cache
           cache_entry->set_status(CacheEntry::Status::FAILED);
         }       
 
-        {
-          Data * bkp_data = cache_entry->data();
-          if (compression())
-            cache_entry->compress();
+        
+        result = cache_entry->data();
+        if (compression())
+          cache_entry->compress();
 
-          entry_lock.unlock();
+        entry_lock.unlock();
+        {
           scoped_lock lock(mtx);
           do_mru(cache_entry);
-          entry_lock.lock();
-
-          cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with the key
-
-          result = make_pair(bkp_data, cache_entry->ad_hoc_code());
-          // result = make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
         }
+        entry_lock.lock();
 
+        cache_entry->waiting_cv().notify_all(); // wake up waiting threads associated with the key
+        
         break;
 
         case CacheEntry::Status::CALCULATING:
@@ -765,20 +762,18 @@ class Cache
               return cache_entry->status() != CacheEntry::Status::CALCULATING;
             });
             // TODO: what if it was compressed? data would not have been set
-            result = make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
+            result = cache_entry->data();
           }
         break;
 
         case CacheEntry::Status::READY:
-          if (compression()){
-            scoped_lock lock(cache_entry->mtx());
-            cache_entry->decompress();
-          }
-          result = make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
+          result = cache_entry->data();
+          if (compression())
+            cache_entry->decompress();          
         break;
 
         case CacheEntry::Status::FAILED:
-          result = make_pair(nullptr, cache_entry->ad_hoc_code());
+          result = nullptr;
         break;
 
         default:
@@ -838,10 +833,8 @@ class Cache
             assert(cache_entry->status() == Status::READY or
                    cache_entry->status() == Status::FAILED);
 
-            if (compression()){
-              // scoped_lock lock(cache_entry->mtx());
+            if (compression())
               cache_entry->decompress();
-            }
 
             return make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
           }
@@ -849,7 +842,9 @@ class Cache
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
-    return resolve_cache_miss(cache_entry, time_now);
+    auto bkp_data = resolve_cache_miss(cache_entry, time_now);
+    
+    return {bkp_data, cache_entry->ad_hoc_code()};
   }
 
   void remove(const Key &key)

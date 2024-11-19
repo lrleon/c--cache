@@ -414,14 +414,14 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
 
   // wait miss handler to finish
-  pair<int *, int8_t> res = future.get();
+  int * res = future.get();
 
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::READY);
   ASSERT_FALSE(cache_entry->has_ttl_expired(high_resolution_clock::now()));
 
-  ASSERT_EQ(*res.first, 10);
-  ASSERT_EQ(res.second, 1);
+  ASSERT_EQ(*res, 10);
+  ASSERT_EQ(cache_entry->ad_hoc_code(), 1);
   ASSERT_EQ(cache_entry->get_data(), 10);
 }
 
