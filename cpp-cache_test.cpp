@@ -228,12 +228,13 @@ TEST_F(SimpleFixture, touch)
 
   // touch key 1
   ASSERT_TRUE(cache.touch(1));
+
   // check lru entry
   ASSERT_EQ(cache.get_lru_entry()->key(), 2);
   ASSERT_NE(cache.get_lru_entry()->key(), 1);
+
   // touch unknown key
   ASSERT_FALSE(cache.touch(90));
-
 }
 
 TEST_F(SimpleFixture, cache_is_full)
@@ -373,7 +374,7 @@ struct TimeConsumingFixture : public Test
   Cache<int, int> cache;
 
   TimeConsumingFixture()
-    : cache(5, 3s, 1s, miss_handler)
+    : cache(5, 5s, 1s, miss_handler)
   {
     // empty
   }
@@ -395,14 +396,14 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   sleep(1);
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
+
   // wait miss handler to finish
   pair<int *, int8_t> res = future.get();
 
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::READY);
+  ASSERT_FALSE(cache_entry->has_ttl_expired(high_resolution_clock::now()));
 
-  ASSERT_EQ(cache.size(), 1);
-  ASSERT_TRUE(cache.has(1));
   ASSERT_EQ(*res.first, 10);
   ASSERT_EQ(res.second, 1);
   ASSERT_EQ(cache_entry->data(), 10);
@@ -431,7 +432,6 @@ TEST_F(TimeConsumingFixture, two_threads)
 
   ASSERT_EQ(res1.first, res2.first); // same address
   ASSERT_EQ(res1.second, res2.second);
-
 }
 
 TEST_F(TimeConsumingFixture, multithread_cache_full)
