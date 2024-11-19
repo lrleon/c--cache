@@ -170,7 +170,7 @@ class Cache
     uint8_t _status = static_cast<uint8_t>(Status::AVAILABLE); // status of the cache entry (AVAILABLE, CALCULATING, READY, FAILED)
     int8_t _ad_hoc_code = 0; // ad hoc code to be used by the user for indicating their own codes
 
-    time_point<high_resolution_clock> _ttl_exp_time; // when positive ttl expires
+    time_point<high_resolution_clock> _ttl_exp_time; // when ttl expires
 
    public:
 
@@ -390,8 +390,6 @@ class Cache
     cache_entry->link_lru()->del();
 
     hash_table.remove(*cache_entry);
-
-    cout << "**** key " << cache_entry->key() << " removed from cache" << endl;
   }
 
   // searches and returns the next entry according to lru priority that does not have
@@ -450,10 +448,10 @@ class Cache
     assert(size > 1);
   }
 
-  private:
+ private:
 
   // Assumes that mutex mtx is locked
-  pair<CacheEntry*, bool> contains_or_insert(const Key & key)
+  pair<CacheEntry *, bool> contains_or_insert(const Key &key)
   {
     assert(hash_table.size() <= cache_size);
 
@@ -478,10 +476,6 @@ class Cache
 
     insert_entry_to_lru_list(cache_entry);
 
-    scoped_lock entry_lock(cache_entry->mtx());
-    cache_entry->set_status(CacheEntry::Status::READY);
-    cache_entry->set_ttl_exp_time(high_resolution_clock::now() + positive_ttl);
-
     return p;
   }
 
@@ -494,16 +488,19 @@ class Cache
     using CacheEntry = Cache<Key, Data, Cmp>::CacheEntry;
     assert(hash_table.size() <= cache_size);
 
-    scoped_lock lock(mtx);
-
-    auto p = contains_or_insert(move(key)) ;
+    mtx.lock();
+    auto p = contains_or_insert(move(key));
+    mtx.unlock();
 
     const bool is_in_table = p.second;
     if (is_in_table)
       return nullptr;
 
     CacheEntry *cache_entry = p.first;
+    scoped_lock entry_lock(cache_entry->mtx());
     cache_entry->set_data(std::move(data));
+    cache_entry->set_status(CacheEntry::Status::READY);
+    cache_entry->set_ttl_exp_time(high_resolution_clock::now() + positive_ttl);
 
     return &cache_entry->data();
   }
@@ -520,8 +517,6 @@ class Cache
 
     if (cache_entry == nullptr)
       return false;
-
-    cout << "key " << key << " found in cache" << endl;
 
     scoped_lock entry_lock(cache_entry->mtx());
     if (not has_entry_ttl_expired(cache_entry, high_resolution_clock::now()))
@@ -598,13 +593,11 @@ class Cache
         if (miss_handler(cache_entry->key(), &cache_entry->data(),
                          cache_entry->ad_hoc_code()))
           {
-            cout << "miss handler succeeded" << endl;
             cache_entry->set_ttl_exp_time(time_now + positive_ttl);
             cache_entry->set_status(CacheEntry::Status::READY);
           }
         else
           {
-            cout << "miss handler failed" << endl;
             cache_entry->set_ttl_exp_time(time_now + negative_ttl);
             cache_entry->set_status(CacheEntry::Status::FAILED);
           }
@@ -641,8 +634,8 @@ class Cache
 
         default:
           ah_fatal_error()
-          << "unknown status " << static_cast<int>(cache_entry->status());
-          break;
+            << "unknown status " << static_cast<int>(cache_entry->status());
+        break;
       }
 
     return result;
@@ -700,10 +693,6 @@ class Cache
             return make_pair(&cache_entry->data(), cache_entry->ad_hoc_code());
           }
       }
-
-    cout << "key " << key << " not found in cache" << endl
-         << "cache size: " << hash_table.size() << endl
-         << "calling miss handler" << endl;
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
