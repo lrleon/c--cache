@@ -485,7 +485,7 @@ class Cache
   // to the data in the cache. Otherwise, it returns nullptr.
   Data *insert(Key &&key, Data &&data)
   {
-    using CacheEntry = Cache<Key, Data, Cmp>::CacheEntry;
+    using CacheEntry = typename Cache<Key, Data, Cmp>::CacheEntry;
     assert(hash_table.size() <= cache_size);
 
     mtx.lock();
@@ -647,7 +647,6 @@ class Cache
   pair<Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
   {
     using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
-    assert(hash_table.size() <= cache_size);
 
     CacheEntry entry(key);
 

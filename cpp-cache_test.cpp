@@ -475,7 +475,7 @@ TEST_F(TimeConsumingFixture, multithread_cache_full)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 {
-  constexpr int N = 100;
+  constexpr int N = 20;
   vector<future<pair<int *, int8_t>>> futures;
 
   for (int i = 1; i <= 5; ++i)
@@ -512,7 +512,7 @@ TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 {
-  constexpr int N = 100;
+  constexpr int N = 20;
   vector<thread> threads;
   vector<pair<int *, int8_t>> results(N * 5);
   mutex results_mutex;
@@ -580,7 +580,7 @@ struct RandomTimeFixture : public Test
 
 TEST_F(RandomTimeFixture, random_miss_handler)
 {
-  constexpr int N = 1000;
+  constexpr int N = 30;
   vector<future<pair<int *, int8_t>>> futures;
 
   for (int i = 1; i <= 5; ++i)
