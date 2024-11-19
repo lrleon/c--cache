@@ -55,6 +55,7 @@ class Cache
   FRIEND_TEST(SimpleFixture, basic);
   FRIEND_TEST(SimpleFixture, lru);
   FRIEND_TEST(SimpleFixture, touch);
+  FRIEND_TEST(SimpleFixture, compression);
   FRIEND_TEST(cache_entry, basic);
   FRIEND_TEST(cache_entry, key_copy_works);
   FRIEND_TEST(cache_entry, key_move_works);
@@ -409,6 +410,7 @@ class Cache
       } else {
         TypeWrapper<Data> data_wrapper;
         data_wrapper.deserialize(decompressed_data);
+        this->set_data(data_wrapper);
       }
 
       this->original_data_size() = 0;

@@ -358,6 +358,22 @@ TEST_F(SimpleFixture, iterator)
   ASSERT_EQ(*it.get_curr().second, kv->second);
 }
 
+TEST_F(SimpleFixture, compression)
+{
+  using CacheEntry = Cache<int, int>::CacheEntry;
+  CacheEntry entry(1, 10);
+  entry.compress();
+
+  ASSERT_EQ(entry.data(), nullptr);
+  ASSERT_NE(entry.compressed_data().size(), 0);
+
+  entry.decompress();
+
+  ASSERT_NE(entry.data(), nullptr);
+  ASSERT_EQ(entry.compressed_data().size(), 0);
+  ASSERT_EQ(entry.get_data(), 10);
+}
+
 struct TimeConsumingFixture : public Test
 {
   static bool miss_handler(const int &key, int *data,
