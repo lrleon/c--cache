@@ -399,7 +399,6 @@ class Cache
   // recently used.
   CacheEntry *get_lru_entry()
   {
-    assert(hash_table.size() <= cache_size);
     assert(not lru_list.is_empty());
 
     Dlink *lru_entry_link = lru_list.get_prev();
@@ -505,14 +504,6 @@ class Cache
 
     CacheEntry *cache_entry = p.first;
     cache_entry->set_data(std::move(data));
-
-    assert(cache_entry->link_lru()->is_empty());
-
-    insert_entry_to_lru_list(cache_entry);
-
-    scoped_lock entry_lock(cache_entry->mtx());
-    cache_entry->set_status(CacheEntry::Status::READY);
-    cache_entry->set_ttl_exp_time(high_resolution_clock::now() + positive_ttl);
 
     return &cache_entry->data();
   }
