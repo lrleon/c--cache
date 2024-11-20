@@ -386,13 +386,13 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   CacheEntry entry(1);
   CacheEntry *cache_entry = &entry;
   auto future =
-    std::async(std::launch::async, [this, &cache_entry]() mutable
+    std::async(std::launch::async, [this, &cache_entry]()
     {
       return cache.resolve_cache_miss(cache_entry,
                                       high_resolution_clock::now());
     });
 
-  // wait 1s
+  // wait 1 s
   sleep(1);
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
