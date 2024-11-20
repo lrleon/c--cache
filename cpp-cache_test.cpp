@@ -311,6 +311,26 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
     }
 }
 
+TEST_F(SimpleFixture, retrieve_or_compute_expired)
+{
+  auto res = cache.retrieve_from_cache_or_compute(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, 1);
+
+  // wait ttl to expire
+  sleep(1);
+
+  res = cache.retrieve_from_cache_or_compute(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, 1);
+}
+
 // TEST_F(SimpleFixture, get_cache_entry)
 // {
 //   int *data = cache.insert(1, 10);
@@ -725,7 +745,7 @@ TEST_F(CompressionFixture, basic_compression)
   ASSERT_EQ(entry.get_data().vec, original_vec);
 }
 
-TEST_F(CompressionFixture, retrieve_with_compression)
+TEST_F(CompressionFixture, retrieve)
 {
   auto res = cache.retrieve_from_cache_or_compute(1);
 
@@ -742,6 +762,28 @@ TEST_F(CompressionFixture, retrieve_with_compression)
       ASSERT_TRUE(cache.has(1));
       res.first->id++;
       ASSERT_EQ(res.first->id, 10 + i);
+      ASSERT_EQ(res.second, 1);
+    }
+}
+
+TEST_F(CompressionFixture, retrieve_compressed)
+{
+  auto res = cache.retrieve_from_cache_or_compute_compressed(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  vector<char> org_buf =  res.first;
+  ASSERT_TRUE(org_buf.size() > 0);
+  ASSERT_EQ(res.second, 1);
+
+  for (int i = 1; i < 10; ++i)
+    {
+      res = cache.retrieve_from_cache_or_compute_compressed(1);
+
+      ASSERT_EQ(cache.size(), 1);
+      ASSERT_TRUE(cache.has(1));
+      ASSERT_TRUE(res.first.size() > 0);
+      ASSERT_EQ(res.first, org_buf);
       ASSERT_EQ(res.second, 1);
     }
 }

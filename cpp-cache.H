@@ -785,13 +785,47 @@ class Cache
     return result;
   }
 
+bool resolve_cache_hit(CacheEntry *cache_entry,
+                    const high_resolution_clock::time_point &time_now)
+{
+  using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
+  bool I_must_remove_entry = false;
+  {
+    scoped_lock lock(cache_entry->mtx());
+    I_must_remove_entry = has_entry_ttl_expired(cache_entry, time_now);
+  }
+
+  if (I_must_remove_entry)
+  {
+    scoped_lock lock(mtx);
+    remove_entry_from_hash_table(cache_entry); // mtx is locked
+    return false;
+  }
+  else
+  {
+    mtx.lock();
+    do_mru(cache_entry);
+    mtx.unlock();
+
+    unique_lock entry_lock(cache_entry->mtx());
+    cache_entry->
+    waiting_cv().wait(entry_lock,
+                      [cache_entry]
+                      {
+                        return cache_entry->status() != Status::CALCULATING;
+                      });
+
+    assert(cache_entry->status() == Status::READY or
+            cache_entry->status() == Status::FAILED);
+    return true;
+  }
+}
+
  public:
 
   // computed/retrieved data, ad hoc status set by the miss handler
   pair<Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
   {
-    using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
-
     CacheEntry entry(key);
 
     // TODO: I need to handle here if the cache is full
@@ -804,47 +838,45 @@ class Cache
     auto *cache_entry = static_cast<CacheEntry *>(p.first);
 
     auto time_now = high_resolution_clock::now();
-    if (is_in_table)
-      {
-        bool I_must_remove_entry = false;
-        {
-          scoped_lock lock(cache_entry->mtx());
-          I_must_remove_entry = has_entry_ttl_expired(cache_entry, time_now);
-        }
-        if (I_must_remove_entry)
-          {
-            scoped_lock lock(mtx);
-            remove_entry_from_hash_table(cache_entry); // mtx is locked
-          }
-        else
-          {
-            mtx.lock();
-            do_mru(cache_entry);
-            mtx.unlock();
+    if (is_in_table && resolve_cache_hit(cache_entry, time_now)){
 
-            unique_lock entry_lock(cache_entry->mtx());
-            cache_entry->
-              waiting_cv().wait(entry_lock,
-                                [cache_entry]
-                                {
-                                  return cache_entry->status() != Status::CALCULATING;
-                                });
+      if (compression())
+        cache_entry->decompress();
 
-            assert(cache_entry->status() == Status::READY or
-                   cache_entry->status() == Status::FAILED);
-
-            if (compression())
-              cache_entry->decompress();
-
-            return make_pair(cache_entry->data(), cache_entry->ad_hoc_code());
-          }
-      }
+      return {cache_entry->data(), cache_entry->ad_hoc_code()};
+    }
+     
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
     auto bkp_data = resolve_cache_miss(cache_entry, time_now);
     
     return {bkp_data, cache_entry->ad_hoc_code()};
+  }
+
+  // computed/retrieved data, ad hoc status set by the miss handler
+  pair<vector<char>, int8_t> retrieve_from_cache_or_compute_compressed(const Key &key)
+  {
+    CacheEntry entry(key);
+
+    // TODO: I need to handle here if the cache is full
+    // 1. Search for the entry in the hash table
+    mtx.lock();
+    auto p = contains_or_insert(key);
+    mtx.unlock();
+
+    const bool is_in_table = p.second;
+    auto *cache_entry = static_cast<CacheEntry *>(p.first);
+
+    auto time_now = high_resolution_clock::now();
+    if (is_in_table && resolve_cache_hit(cache_entry, time_now))
+      return {cache_entry->compressed_data(), cache_entry->ad_hoc_code()};
+
+    // 3. If not found ==> compute the data and write it to the cache_entry, which is
+    //    already in the hash table
+    resolve_cache_miss(cache_entry, time_now);
+    
+    return {cache_entry->compressed_data(), cache_entry->ad_hoc_code()};
   }
 
   void remove(const Key &key)
