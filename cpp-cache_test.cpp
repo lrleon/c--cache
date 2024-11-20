@@ -64,7 +64,7 @@ TEST(cache_entry, key_move_works)
   Cache<vector<int>, int>::CacheEntry cache_entry;
 
   vector<int> key = {1, 2, 3};
-  cache_entry.set_key(move(key));
+  cache_entry.set_key(std::move(key));
 
   ASSERT_EQ(cache_entry.key().size(), 3);
   ASSERT_EQ(cache_entry.key(), vector<int>({1, 2, 3}));
@@ -311,6 +311,26 @@ TEST_F(SimpleFixture, retrieve_or_compute_basic)
     }
 }
 
+TEST_F(SimpleFixture, retrieve_or_compute_expired)
+{
+  auto res = cache.retrieve_from_cache_or_compute(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, 1);
+
+  // wait ttl to expire
+  sleep(1);
+
+  res = cache.retrieve_from_cache_or_compute(1);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+  ASSERT_EQ(*res.first, 10);
+  ASSERT_EQ(res.second, 1);
+}
+
 TEST_F(SimpleFixture, get_cache_entry)
 {
   int *data = cache.insert(1, 10);
@@ -528,7 +548,7 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
                                    cache.retrieve_from_cache_or_compute(i);
                                  {
                                    lock_guard<mutex> lock(results_mutex);
-                                   results[result_index++] = result;
+                                   results[result_index++] = std::move(result);
                                  }
                                });
         }
@@ -562,7 +582,7 @@ struct RandomTimeFixture : public Test
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
 
-    // sleep for a random time between 0.5 s and  9.5 s
+    // sleep for a random time between 0.5 s and 9.5 s
     this_thread::sleep_for(chrono::milliseconds(500) +
                             chrono::milliseconds(rand() % 9000));
 
