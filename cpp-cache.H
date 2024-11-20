@@ -657,7 +657,6 @@ class Cache
 
     CacheEntry entry(key);
 
-    // TODO: I need to handle here if the cache is full
     // 1. Search for the entry in the hash table
     mtx.lock();
     auto p = contains_or_insert(key);
