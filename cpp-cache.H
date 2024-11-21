@@ -24,28 +24,38 @@ using namespace Aleph;
 using namespace std::chrono;
 
 /* This is an implementation of a table-based associative cache.
-   hash. The cache handles <Key, Data> pairs where Key is the key
-   associative and Data is the data related to Key. are not allowed
+   Hash.
+
+   The cache handles <Key, Data> pairs where Key is the key
+   associative and Data is the data related to Key.
+   Are not allowed
    duplicate <Key, Data> pairs, but it is possible to have key
    duplicates.
 
    The cache has a size defined by cache_size specified in the
-   builder. When the number of pairs inserted into the cache
-   reaches cache_size, then the cache is said to be full. If
+   builder.
+   When the number of pairs inserted into the cache
+   reaches cache_size, then the cache is said to be full.
+   If
    tries to insert a new pair into a full cache, then it must
-   delete a pair. In this implementation, the minus torque is eliminated
+   delete a pair.
+   In this implementation, the minus torque is eliminated
    recently used (lru).
 
    The implementation is based on a hash table with resolution of
-   collisions by separate chaining. Each bucket in the table
-   stores the pair. Additionally, the bucket contains a link that
+   collisions by separate chaining.
+   Each bucket in the table
+   stores the pair.
+   Additionally, the bucket contains a link that
    acts as a connector to a doubly linked list that simulates the
-   lru order. Additionally, the bucket contains a direct link to the cache
+   lru order.
+   Additionally, the bucket contains a direct link to the cache
    used to update your statistics.
 
    Pairs can be "locked"; that is: when a pair is
    blocked, it cannot be removed from the cache until it is
-   released. A locked bucket will never be selected for
+   released.
+   A locked bucket will never be selected for
    replacement by lru policy.
 */
 
@@ -70,7 +80,7 @@ class Cache
   {
    private:
 
-    Key _key;
+    Key _key = Key();
     Data * _data = nullptr;
     vector<char> _compressed_data = vector<char>();
     int _original_data_size = 0;
@@ -407,8 +417,6 @@ class Cache
     }
   }; // end class CacheEntry
 
- private:
-
   struct CacheCmp
   {
     bool operator()(const CacheEntry &lhs, const CacheEntry &rhs) const
@@ -553,6 +561,7 @@ class Cache
   // returns true if the entry has expired
   bool has_entry_ttl_expired(CacheEntry *cache_entry,
                              const high_resolution_clock::time_point &time_now)
+                             const noexcept
   {
     return cache_entry->has_ttl_expired(time_now);
   }
@@ -578,7 +587,7 @@ class Cache
                  hash_default_upper_alpha,
                  false),
       positive_ttl(positive_ttl), negative_ttl(negative_ttl),
-      miss_handler(miss_handler), _compression(compression)
+      miss_handler(move(miss_handler)), _compression(compression)
   {
     assert(size > 1);
   }
@@ -789,35 +798,31 @@ bool resolve_cache_hit(CacheEntry *cache_entry,
                     const high_resolution_clock::time_point &time_now)
 {
   using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
-  bool I_must_remove_entry = false;
-  {
-    scoped_lock lock(cache_entry->mtx());
-    I_must_remove_entry = has_entry_ttl_expired(cache_entry, time_now);
-  }
-
-  if (I_must_remove_entry)
-  {
-    scoped_lock lock(mtx);
-    remove_entry_from_hash_table(cache_entry); // mtx is locked
+  unique_lock entry_lock(cache_entry->mtx());
+  if (has_entry_ttl_expired(cache_entry, time_now))
+  { // Kind of reset so that resolve_cache_miss() works correctly.
+    // It is not necessary to remove the entry from the hash table because
+    // it is already there nor from the lru list because it is also already
+    // there.
+    cache_entry->set_status(Status::AVAILABLE);
+    cache_entry->ad_hoc_code() = 0;
     return false;
   }
   else
   {
+    entry_lock.unlock();
     mtx.lock();
     do_mru(cache_entry);
     mtx.unlock();
+    entry_lock.lock();
 
-    unique_lock entry_lock(cache_entry->mtx());
     cache_entry->
-    waiting_cv().wait(entry_lock,
-                      [cache_entry]
-                      {
-                        return cache_entry->status() != Status::CALCULATING;
-                      });
-
-    assert(cache_entry->status() == Status::READY or
-            cache_entry->status() == Status::FAILED);
-    return true;
+      waiting_cv().wait(entry_lock,
+                        [cache_entry]
+                        {
+                          return cache_entry->status() != Status::CALCULATING;
+                        });
+  return true;
   }
 }
 
@@ -828,7 +833,6 @@ bool resolve_cache_hit(CacheEntry *cache_entry,
   {
     CacheEntry entry(key);
 
-    // TODO: I need to handle here if the cache is full
     // 1. Search for the entry in the hash table
     mtx.lock();
     auto p = contains_or_insert(key);
@@ -911,7 +915,7 @@ bool resolve_cache_hit(CacheEntry *cache_entry,
 
     pair<const Key &, Data *> get_curr()
     {
-      CacheEntry &cache_entry =
+      CacheEntry & cache_entry =
         OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
       return make_pair(cache_entry.key(), cache_entry.data());

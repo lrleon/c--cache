@@ -16,13 +16,3 @@ target_link_libraries(cpp_cache_test
     pthread
     lz4
 )
-
-
-add_executable(serial_mem_test serial_mem_test.cpp)
-
-target_link_libraries(serial_mem_test
-PRIVATE
-    gtest_main
-    gtest
-    pthread
-)

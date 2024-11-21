@@ -64,7 +64,7 @@ TEST(cache_entry, key_move_works)
   Cache<vector<int>, int>::CacheEntry cache_entry;
 
   vector<int> key = {1, 2, 3};
-  cache_entry.set_key(move(key));
+  cache_entry.set_key(std::move(key));
 
   ASSERT_EQ(cache_entry.key().size(), 3);
   ASSERT_EQ(cache_entry.key(), vector<int>({1, 2, 3}));
@@ -422,13 +422,13 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   CacheEntry entry(1);
   CacheEntry *cache_entry = &entry;
   auto future =
-    std::async(std::launch::async, [this, &cache_entry]() mutable
+    std::async(std::launch::async, [this, &cache_entry]()
     {
       return cache.resolve_cache_miss(cache_entry,
                                       high_resolution_clock::now());
     });
 
-  // wait 1s
+  // wait 1 s
   sleep(1);
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
@@ -564,7 +564,7 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
                                    cache.retrieve_from_cache_or_compute(i);
                                  {
                                    lock_guard<mutex> lock(results_mutex);
-                                   results[result_index++] = result;
+                                   results[result_index++] = std::move(result);
                                  }
                                });
         }
@@ -598,7 +598,7 @@ struct RandomTimeFixture : public Test
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
 
-    // sleep for a random time between 0.5 s and  9.5 s
+    // sleep for a random time between 0.5 s and 9.5 s
     this_thread::sleep_for(chrono::milliseconds(500) +
                             chrono::milliseconds(rand() % 9000));
 
@@ -651,6 +651,10 @@ TEST_F(RandomTimeFixture, random_miss_handler)
     }
 
 }
+
+// TODO: TEST using handler with variadic arguments
+
+// TODO: more testing on concurrent temporal invariants
 
 struct CompressionFixture : public Test
 {
@@ -787,7 +791,6 @@ TEST_F(CompressionFixture, retrieve_compressed)
       ASSERT_EQ(res.second, 1);
     }
 }
-
 
 TEST_F(CompressionFixture, two_threads_with_compression)
 {
