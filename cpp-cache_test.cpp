@@ -635,4 +635,8 @@ TEST_F(RandomTimeFixture, random_miss_handler)
     }
 }
 
+// TODO: TEST using handler with variadic arguments
+
+// TODO: more testing on concurrent temporal invariants
+
 
