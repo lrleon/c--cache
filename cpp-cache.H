@@ -723,6 +723,8 @@ class Cache
 
  private:
 
+  // handles the entry when it is not found on the cache.
+  // Returns the calculated data.
   Data * resolve_cache_miss(CacheEntry *cache_entry,
                      const high_resolution_clock::time_point &time_now)
   {
@@ -794,22 +796,22 @@ class Cache
     return result;
   }
 
-bool resolve_cache_hit(CacheEntry *cache_entry,
-                    const high_resolution_clock::time_point &time_now)
-{
-  using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
-  unique_lock entry_lock(cache_entry->mtx());
-  if (has_entry_ttl_expired(cache_entry, time_now))
-  { // Kind of reset so that resolve_cache_miss() works correctly.
-    // It is not necessary to remove the entry from the hash table because
-    // it is already there nor from the lru list because it is also already
-    // there.
-    cache_entry->set_status(Status::AVAILABLE);
-    cache_entry->ad_hoc_code() = 0;
-    return false;
-  }
-  else
+  // handles the entry when it is found on th cache.
+  // Returns true if the entry is still valid, false otherwise.
+  bool resolve_cache_hit(CacheEntry *cache_entry,
+                      const high_resolution_clock::time_point &time_now)
   {
+    using Status = typename Cache<Key, Data, Cmp>::CacheEntry::Status;
+    unique_lock entry_lock(cache_entry->mtx());
+    if (has_entry_ttl_expired(cache_entry, time_now))
+    { // Kind of reset so that resolve_cache_miss() works correctly.
+      // It is not necessary to remove the entry from the hash table because
+      // it is already there nor from the lru list because it is also already
+      // there.
+      cache_entry->set_status(Status::AVAILABLE);
+      cache_entry->ad_hoc_code() = 0;
+      return false;
+    }
     entry_lock.unlock();
     mtx.lock();
     do_mru(cache_entry);
@@ -822,9 +824,7 @@ bool resolve_cache_hit(CacheEntry *cache_entry,
                         {
                           return cache_entry->status() != Status::CALCULATING;
                         });
-  return true;
-  }
-}
+    }
 
  public:
 
