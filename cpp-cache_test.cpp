@@ -6,6 +6,7 @@
 # include <utility>
 # include <gtest/gtest.h>
 # include <future>
+# include <thread>
 # include "cpp-cache.H"
 
 # include <tpl_dynMapTree.H>
@@ -410,7 +411,7 @@ struct TimeConsumingFixture : public Test
   Cache<int, int> cache;
 
   TimeConsumingFixture()
-    : cache(5, 3s, 1s, miss_handler)
+    : cache(5, 20s, 1s, miss_handler)
   {
     // empty
   }
@@ -511,83 +512,98 @@ TEST_F(TimeConsumingFixture, multithread_cache_full)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 {
-  constexpr int N = 20;
-  vector<future<pair<int *, int8_t>>> futures;
+  for (int k = 0; k < 20; k++){
+    constexpr int N = 20;
+    vector<future<pair<int *, int8_t>>> futures;
 
-  for (int i = 1; i <= 5; ++i)
-    {
-      for (int j = 0; j < N; ++j)
-        {
-          futures.push_back(std::async(std::launch::async, [this, i]()
+    for (int i = 1; i <= 5; ++i)
+      {
+        for (int j = 0; j < N; ++j)
           {
-            return cache.retrieve_from_cache_or_compute(i);
-          }));
-        }
-    }
+            futures.push_back(std::async(std::launch::async, [this, i]()
+            {
+              return cache.retrieve_from_cache_or_compute(i);
+            }));
+          }
+      }
 
-  vector<pair<int *, int8_t>> results;
-  for (int i = 0; i < N * 5; ++i)
-    results.push_back(futures[i].get());
+    vector<pair<int *, int8_t>> results;
+    for (int i = 0; i < N * 5; ++i)
+      results.push_back(futures[i].get());
 
-  ASSERT_EQ(cache.size(), 5);
+    ASSERT_EQ(cache.size(), 5);
 
-  for (int i = 1; i <= 5; ++i)
-    ASSERT_TRUE(cache.has(i));
+    for (int i = 1; i <= 5; ++i)
+      ASSERT_TRUE(cache.has(i));
 
-  for (int i = 0; i < N * 5; i += N)
-    {
-      auto res_i = results[i];
-      for (int j = 1; j < N; ++j)
-        {
-          auto res_j = results[i + j];
-          ASSERT_EQ(res_i.first, res_j.first); // same address
-          ASSERT_EQ(res_i.second, res_j.second);
-        }
-    }
+    for (int i = 0; i < N * 5; i += N)
+      {
+        auto res_i = results[i];
+        for (int j = 1; j < N; ++j)
+          {
+            auto res_j = results[i + j];
+            ASSERT_EQ(res_i.first, res_j.first); // same address
+            ASSERT_EQ(res_i.second, res_j.second);
+          }
+      }
+  }
 }
 
 TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 {
-  constexpr int N = 20;
-  vector<thread> threads;
-  vector<pair<int *, int8_t>> results(N * 5);
-  mutex results_mutex;
-  int result_index = 0;
+  using CacheEntry = Cache<int, int>::CacheEntry;
+  for (int k = 0; k < 50; k++){
+    constexpr int N = 20;
+    vector<thread> threads;
+    vector<pair<int *, int8_t>> results(N * 5);
+    mutex results_mutex;
+    int result_index = 0;
 
-  for (int i = 1; i <= 5; ++i)
-    {
-      for (int j = 0; j < N; ++j)
-        {
-          threads.emplace_back([this, i, &results, &results_mutex, &result_index]()
-                               {
-                                 auto result =
-                                   cache.retrieve_from_cache_or_compute(i);
-                                 {
-                                   lock_guard<mutex> lock(results_mutex);
-                                   results[result_index++] = std::move(result);
-                                 }
-                               });
-        }
-    }
+    for (int i = 1; i <= 5; ++i)
+      {
+        for (int j = 0; j < N; ++j)
+          {
+            threads.emplace_back([this, i, &results, &results_mutex, &result_index]()
+                                {
+                                  pair<int *, int8_t> result =
+                                    cache.retrieve_from_cache_or_compute(i);
+                                  {
+                                    lock_guard<mutex> lock(results_mutex);
+                                    results[result_index++] = result;
+                                    assert(results[result_index - 1].first == result.first);
+                                  }
+                                });
+          }
+      }
 
-  for (auto &t: threads)
-    t.join();
+    for (auto &t: threads)
+      t.join();
 
-  ASSERT_EQ(cache.size(), 5);
+    for (auto &res: results)
+      {
+        // ASSERT_EQ(*res.first, 10);
+        ASSERT_EQ(res.second, 1);
+      }
+    // continue;
+    ASSERT_EQ(cache.size(), 5);
 
-  for (int i = 1; i <= 5; ++i)
-    ASSERT_TRUE(cache.has(i));
+    for (int i = 1; i <= 5; ++i)
+      ASSERT_TRUE(cache.has(i));
 
-  for (int i = 0; i < N * 5; i += N)
-    {
-      auto res_i = results[i];
-      for (int j = 1; j < N; ++j)
-        {
-          auto res_j = results[i + j];
-          ASSERT_EQ(res_i.first, res_j.first); // same address
-          ASSERT_EQ(res_i.second, res_j.second);
-        }
-    }
+    for (int i = 0; i < N * 5; i += N)
+      {
+        auto res_i = results[i];
+        for (int j = 1; j < N; ++j)
+          {
+            auto res_j = results[i + j];
+            auto cache_entry_i = CacheEntry::to_CacheEntry(*res_i.first);
+            ASSERT_EQ(cache_entry_i->key(), *res_j.first/10);
+            ASSERT_EQ(*res_i.first, *res_j.first);
+            ASSERT_EQ(res_i.first, res_j.first); // same address
+            ASSERT_EQ(res_i.second, res_j.second);
+          }
+      }
+  }
 }
 
 struct RandomTimeFixture : public Test

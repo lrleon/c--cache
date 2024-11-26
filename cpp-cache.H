@@ -73,6 +73,7 @@ class Cache
   FRIEND_TEST(cache_entry, data_move_works);
   FRIEND_TEST(SimpleFixture, get_cache_entry);
   FRIEND_TEST(TimeConsumingFixture, calculating_status_while_computing);
+  FRIEND_TEST(TimeConsumingFixture, multithread_heavy_threads);
   FRIEND_TEST(CompressionFixture, basic_compression);
   FRIEND_TEST(CompressionFixture, retrieve_with_compression);
 
