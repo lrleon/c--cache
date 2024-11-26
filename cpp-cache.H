@@ -779,9 +779,7 @@ class Cache
         break;
 
         case CacheEntry::Status::READY:
-          result = cache_entry->data();
-          if (compression())
-            cache_entry->decompress();          
+          result = cache_entry->data();          
         break;
 
         case CacheEntry::Status::FAILED:
@@ -844,9 +842,10 @@ class Cache
 
     auto time_now = high_resolution_clock::now();
     if (is_in_table && resolve_cache_hit(cache_entry, time_now)){
-
-      if (compression())
-        cache_entry->decompress();
+      if (compression()) {        
+        scoped_lock entry_lock(cache_entry->mtx());
+        cache_entry->decompress();        
+      }
 
       return {cache_entry->data(), cache_entry->ad_hoc_code()};
     }
@@ -855,8 +854,13 @@ class Cache
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
     auto bkp_data = resolve_cache_miss(cache_entry, time_now);
+
+    if (compression() && cache_entry->compressed_data().size() > 0) {        
+        scoped_lock entry_lock(cache_entry->mtx());
+        cache_entry->decompress();        
+      }     
     
-    return {bkp_data, cache_entry->ad_hoc_code()};
+    return {cache_entry->data(), cache_entry->ad_hoc_code()};
   }
 
   // computed/retrieved data, ad hoc status set by the miss handler

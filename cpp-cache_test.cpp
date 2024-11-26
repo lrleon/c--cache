@@ -795,6 +795,7 @@ TEST_F(CompressionFixture, retrieve_compressed)
 
       ASSERT_EQ(cache.size(), 1);
       ASSERT_TRUE(cache.has(1));
+      cout << res.first.size() << endl;
       ASSERT_TRUE(res.first.size() > 0);
       ASSERT_EQ(res.first, org_buf);
       ASSERT_EQ(res.second, 1);
