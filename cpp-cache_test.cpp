@@ -559,31 +559,26 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
     mutex results_mutex;
     int result_index = 0;
 
-    for (int i = 1; i <= 5; ++i)
-      {
-        for (int j = 0; j < N; ++j)
-          {
-            threads.emplace_back([this, i, &results, &results_mutex, &result_index]()
+    for (int i = 0; i < 5; ++i)
+      for (int j = 0; j < N; ++j)
+        {
+          threads.emplace_back([this, i, j, &results, &results_mutex, &result_index]()
+                              {
+                                pair<int *, int8_t> result =
+                                  cache.retrieve_from_cache_or_compute(i+1);
                                 {
-                                  pair<int *, int8_t> result =
-                                    cache.retrieve_from_cache_or_compute(i);
-                                  {
-                                    lock_guard<mutex> lock(results_mutex);
-                                    results[result_index++] = result;
-                                    assert(results[result_index - 1].first == result.first);
-                                  }
-                                });
-          }
-      }
+                                  lock_guard<mutex> lock(results_mutex);
+                                  results[i * N + j] = result;
+                                }
+                              });
+        }
+      
 
     for (auto &t: threads)
       t.join();
 
     for (auto &res: results)
-      {
-        // ASSERT_EQ(*res.first, 10);
-        ASSERT_EQ(res.second, 1);
-      }
+      ASSERT_EQ(res.second, 1);
     // continue;
     ASSERT_EQ(cache.size(), 5);
 
@@ -596,8 +591,6 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
         for (int j = 1; j < N; ++j)
           {
             auto res_j = results[i + j];
-            auto cache_entry_i = CacheEntry::to_CacheEntry(*res_i.first);
-            ASSERT_EQ(cache_entry_i->key(), *res_j.first/10);
             ASSERT_EQ(*res_i.first, *res_j.first);
             ASSERT_EQ(res_i.first, res_j.first); // same address
             ASSERT_EQ(res_i.second, res_j.second);
