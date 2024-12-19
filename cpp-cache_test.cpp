@@ -708,3 +708,25 @@ TEST_F(ComplexKey, cache)
   ASSERT_EQ(ad_hoc_code_1, 1);
   ASSERT_EQ(ad_hoc_code_2, 1);
 }
+//
+//struct VariadicHandler : public Test
+//{
+//  template <typename ... Args>
+//  static bool miss_handler(const int &key, int *data,
+//                           int8_t &ad_hoc_code,
+//                           Args ... args)
+//  {
+//    *data = key * 10;
+//    ++ad_hoc_code; // never must be greater than 1
+//    return true;
+//  }
+//
+//  Cache<int, int, std::equal_to<int>, int> cache;
+//
+//  VariadicHandler()
+//    : cache(5, 1s, 1s, miss_handler)
+//  {
+//    // empty
+//  }
+//
+//};

@@ -57,7 +57,7 @@ using namespace std::chrono;
    A locked bucket will never be selected for
    replacement by lru policy.
 */
-template <class Key, class Data, class Cmp = std::equal_to<Key>, typename ... Args>
+template <class Key, class Data, class Cmp = std::equal_to<Key>>
 class Cache
 {
   FRIEND_TEST(SimpleFixture, basic);
@@ -473,7 +473,7 @@ class Cache
 
  public:
 
-  using MissHandlerType = std::function<bool(const Key &, Data *, int8_t &, Args...)>;
+  using MissHandlerType = std::function<bool(const Key &, Data *, int8_t &)>;
 
   static constexpr float ratio = 1.3f;
 
@@ -738,7 +738,8 @@ class Cache
  public:
 
   // computed/retrieved data, ad hoc status set by the miss handler
-  pair<Data *, int8_t> retrieve_from_cache_or_compute(const Key &key)
+  pair<Data *, int8_t>
+    retrieve_from_cache_or_compute(const Key &key)
   {
     CacheEntry entry(key);
 
