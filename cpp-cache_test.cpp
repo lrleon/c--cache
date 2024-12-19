@@ -39,7 +39,6 @@ TEST(cache_entry, basic)
 
   cache_entry.set_ttl_exp_time(high_resolution_clock::now() + 1s);
 
-
   ASSERT_FALSE(cache_entry.has_ttl_expired(high_resolution_clock::now()));
 
   // sleep for 1 second
@@ -399,7 +398,7 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::CALCULATING);
 
   // wait miss handler to finish
-  int * res = future.get();
+  int *res = future.get();
 
   cout << CacheEntry::status_to_string(cache_entry->status()) << endl;
   ASSERT_EQ(cache_entry->status(), CacheEntry::Status::READY);
@@ -476,91 +475,92 @@ TEST_F(TimeConsumingFixture, multithread_cache_full)
 
 TEST_F(TimeConsumingFixture, multithread_heavy_futures)
 {
-  for (int k = 0; k < 20; k++){
-    constexpr int N = 20;
-    vector<future<pair<int *, int8_t>>> futures;
+  for (int k = 0; k < 20; k++)
+    {
+      constexpr int N = 20;
+      vector<future<pair<int *, int8_t>>> futures;
 
-    for (int i = 1; i <= 5; ++i)
-      {
-        for (int j = 0; j < N; ++j)
-          {
-            futures.push_back(std::async(std::launch::async, [this, i]()
+      for (int i = 1; i <= 5; ++i)
+        {
+          for (int j = 0; j < N; ++j)
             {
-              return cache.retrieve_from_cache_or_compute(i);
-            }));
-          }
-      }
+              futures.push_back(std::async(std::launch::async, [this, i]()
+              {
+                return cache.retrieve_from_cache_or_compute(i);
+              }));
+            }
+        }
 
-    vector<pair<int *, int8_t>> results;
-    for (int i = 0; i < N * 5; ++i)
-      results.push_back(futures[i].get());
+      vector<pair<int *, int8_t>> results;
+      for (int i = 0; i < N * 5; ++i)
+        results.push_back(futures[i].get());
 
-    ASSERT_EQ(cache.size(), 5);
+      ASSERT_EQ(cache.size(), 5);
 
-    for (int i = 1; i <= 5; ++i)
-      ASSERT_TRUE(cache.has(i));
+      for (int i = 1; i <= 5; ++i)
+        ASSERT_TRUE(cache.has(i));
 
-    for (int i = 0; i < N * 5; i += N)
-      {
-        auto res_i = results[i];
-        for (int j = 1; j < N; ++j)
-          {
-            auto res_j = results[i + j];
-            ASSERT_EQ(res_i.first, res_j.first); // same address
-            ASSERT_EQ(res_i.second, res_j.second);
-          }
-      }
-  }
+      for (int i = 0; i < N * 5; i += N)
+        {
+          auto res_i = results[i];
+          for (int j = 1; j < N; ++j)
+            {
+              auto res_j = results[i + j];
+              ASSERT_EQ(res_i.first, res_j.first); // same address
+              ASSERT_EQ(res_i.second, res_j.second);
+            }
+        }
+    }
 }
 
 TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 {
   using CacheEntry = Cache<int, int>::CacheEntry;
-  for (int k = 0; k < 50; k++){
-    constexpr int N = 20;
-    vector<thread> threads;
-    vector<pair<int *, int8_t>> results(N * 5);
-    mutex results_mutex;
-    int result_index = 0;
+  for (int k = 0; k < 50; k++)
+    {
+      constexpr int N = 20;
+      vector<thread> threads;
+      vector<pair<int *, int8_t>> results(N * 5);
+      mutex results_mutex;
+      int result_index = 0;
 
-    for (int i = 0; i < 5; ++i)
-      for (int j = 0; j < N; ++j)
-        {
-          threads.emplace_back([this, i, j, &results, &results_mutex, &result_index]()
-                              {
-                                pair<int *, int8_t> result =
-                                  cache.retrieve_from_cache_or_compute(i+1);
-                                {
-                                  lock_guard<mutex> lock(results_mutex);
-                                  results[i * N + j] = result;
-                                }
-                              });
-        }
-      
-
-    for (auto &t: threads)
-      t.join();
-
-    for (auto &res: results)
-      ASSERT_EQ(res.second, 1);
-    // continue;
-    ASSERT_EQ(cache.size(), 5);
-
-    for (int i = 1; i <= 5; ++i)
-      ASSERT_TRUE(cache.has(i));
-
-    for (int i = 0; i < N * 5; i += N)
-      {
-        auto res_i = results[i];
-        for (int j = 1; j < N; ++j)
+      for (int i = 0; i < 5; ++i)
+        for (int j = 0; j < N; ++j)
           {
-            auto res_j = results[i + j];
-            ASSERT_EQ(*res_i.first, *res_j.first);
-            ASSERT_EQ(res_i.first, res_j.first); // same address
-            ASSERT_EQ(res_i.second, res_j.second);
+            threads.emplace_back([this, i, j, &results, &results_mutex, &result_index]()
+                                 {
+                                   pair<int *, int8_t> result =
+                                     cache.retrieve_from_cache_or_compute(i + 1);
+                                   {
+                                     lock_guard<mutex> lock(results_mutex);
+                                     results[i * N + j] = result;
+                                   }
+                                 });
           }
-      }
-  }
+
+      for (auto &t: threads)
+        t.join();
+
+      for (auto &res: results)
+        ASSERT_EQ(res.second, 1);
+      // continue;
+      ASSERT_EQ(cache.size(), 5);
+
+      for (int i = 1; i <= 5; ++i)
+        ASSERT_TRUE(cache.has(i));
+
+      for (int i = 0; i < N * 5; i += N)
+        {
+          auto res_i = results[i];
+          for (int j = 1; j < N; ++j)
+            {
+              auto res_j = results[i + j];
+              ASSERT_EQ(*res_i.first, *res_j.first);
+              ASSERT_EQ(res_i.first, res_j.first); // same address
+              ASSERT_EQ(res_i.second, res_j.second);
+            }
+        }
+    }
 }
 
 struct RandomTimeFixture : public Test
@@ -573,7 +573,7 @@ struct RandomTimeFixture : public Test
 
     // sleep for a random time between 0.5 s and 9.5 s
     this_thread::sleep_for(chrono::milliseconds(500) +
-                            chrono::milliseconds(rand() % 9000));
+                           chrono::milliseconds(rand() % 9000));
 
     return true;
   }
@@ -622,5 +622,89 @@ TEST_F(RandomTimeFixture, random_miss_handler)
           ASSERT_EQ(res_i.second, res_j.second);
         }
     }
+}
 
+struct ComplexKey : public Test
+{
+  using Tree = DynSetTree<int>;
+
+  template <typename ... Args>
+  Tree create_key(Args ... args)
+  {
+    Tree key;
+    (key.insert(args), ...);
+    return key;
+  }
+
+  static size_t hash_fct(const Tree &tree)
+  {
+    return tree.foldl<size_t>(0, [](size_t acc, int i)
+    {
+      return acc ^ SuperFastHash(i);
+    });
+  }
+
+  static bool miss_handler(const Tree &tree, int *data,
+                           int8_t &ad_hoc_code)
+  {
+    *data = tree.foldl<int>(0, [](int acc, int i)
+    {
+      return acc + i;
+    });
+    ++ad_hoc_code; // never must be greater than 1
+
+    return true;
+  }
+
+  Cache<Tree, int> cache = Cache<Tree, int>(3, 2s, 1s,
+                                            miss_handler,
+                                            hash_fct);
+
+};
+
+TEST_F(ComplexKey, key_creation)
+{
+  // a key with just a node
+  auto tree_1 = create_key(1);
+  ASSERT_EQ(tree_1.size(), 1);
+  ASSERT_TRUE(tree_1.contains(1));
+
+  // a key with 3 nodes
+  auto tree_2 = create_key(1, 2, 3);
+  ASSERT_EQ(tree_2.size(), 3);
+  ASSERT_TRUE(tree_2.contains(1));
+  ASSERT_TRUE(tree_2.contains(2));
+  ASSERT_TRUE(tree_2.contains(3));
+}
+
+TEST_F(ComplexKey, hash_fct)
+{
+  auto tree_1 = create_key(1);
+  auto tree_2 = create_key(11, 20, 30);
+
+  cout << "Hash tree_1: " << hash_fct(tree_1) << endl
+       << "Hash tree_2: " << hash_fct(tree_2) << endl;
+
+  ASSERT_EQ(hash_fct(tree_1), hash_fct(tree_1));
+  ASSERT_EQ(hash_fct(tree_2), hash_fct(tree_2));
+  ASSERT_NE(hash_fct(tree_1), hash_fct(tree_2));
+}
+
+TEST_F(ComplexKey, cache)
+{
+  auto tree_1 = create_key(1);
+  auto tree_2 = create_key(11, 20, 30);
+
+  auto [data_1, ad_hoc_code_1] = cache.retrieve_from_cache_or_compute(tree_1);
+  auto [data_2, ad_hoc_code_2] = cache.retrieve_from_cache_or_compute(tree_2);
+
+  ASSERT_EQ(cache.size(), 2);
+  ASSERT_TRUE(cache.has(tree_1));
+  ASSERT_TRUE(cache.has(tree_2));
+
+  ASSERT_EQ(*data_1, 1);
+  ASSERT_EQ(*data_2, 61);
+
+  ASSERT_EQ(ad_hoc_code_1, 1);
+  ASSERT_EQ(ad_hoc_code_2, 1);
 }
