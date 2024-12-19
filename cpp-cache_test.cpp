@@ -72,7 +72,6 @@ TEST(cache_entry, key_move_works)
   ASSERT_EQ(key.size(), 0);
   ASSERT_TRUE(key.empty());
 }
-
 TEST(cache_entry, data_copy_works)
 {
   Cache<int, vector<int>>::CacheEntry cache_entry;
@@ -117,7 +116,6 @@ struct SimpleFixture : public Test
     // empty
   }
 };
-
 TEST_F(SimpleFixture, basic)
 {
   ASSERT_EQ(cache.capacity(), 5);
@@ -147,7 +145,6 @@ TEST_F(SimpleFixture, basic)
   // check expired key was removed from the cache
   ASSERT_EQ(cache.size(), 0);
 }
-
 TEST_F(SimpleFixture, lru)
 {
   cache.insert(1, 10);
@@ -167,7 +164,6 @@ TEST_F(SimpleFixture, lru)
   // check lru entry
   ASSERT_EQ(cache.get_lru_entry()->key(), 2);
 }
-
 TEST_F(SimpleFixture, insert_with_has_and_touch)
 {
   ASSERT_TRUE(cache.insert(1, 10))
@@ -219,7 +215,6 @@ TEST_F(SimpleFixture, insert_with_has_and_touch)
   ASSERT_EQ(p_lru.first, 1);
   ASSERT_EQ(p_lru.second, 10);
 }
-
 TEST_F(SimpleFixture, touch)
 {
   cache.insert(1, 10);
@@ -237,7 +232,6 @@ TEST_F(SimpleFixture, touch)
   // touch unknown key
   ASSERT_FALSE(cache.touch(90));
 }
-
 TEST_F(SimpleFixture, cache_is_full)
 {
   cache.insert(1, 10);
@@ -275,7 +269,6 @@ TEST_F(SimpleFixture, cache_is_full)
 
   ASSERT_FALSE(cache.has(1));
 }
-
 TEST_F(SimpleFixture, remove)
 {
   cache.insert(1, 10);
@@ -290,7 +283,6 @@ TEST_F(SimpleFixture, remove)
   ASSERT_EQ(cache.size(), 1);
   ASSERT_FALSE(cache.has(1));
 }
-
 TEST_F(SimpleFixture, retrieve_or_compute_basic)
 {
   auto res = cache.retrieve_from_cache_or_compute(1);
@@ -331,18 +323,6 @@ TEST_F(SimpleFixture, retrieve_or_compute_expired)
   ASSERT_EQ(*res.first, 10);
   ASSERT_EQ(res.second, 1);
 }
-
-// TEST_F(SimpleFixture, get_cache_entry)
-// {
-//   int *data = cache.insert(1, 10);
-
-//   auto cache_entry = Cache<int, int>::CacheEntry::to_CacheEntry(*data);
-
-//   ASSERT_EQ(cache_entry->key(), 1);
-//   ASSERT_EQ(cache_entry->get_data(), 10);
-//   ASSERT_EQ(&cache_entry->get_data(), data);
-// }
-
 TEST_F(SimpleFixture, iterator)
 {
   DynMapTree<int, int> key_value_map = {{1, 10},
@@ -379,22 +359,6 @@ TEST_F(SimpleFixture, iterator)
   kv = key_value_map.search(it.get_curr().first);
   ASSERT_NE(kv, nullptr);
   ASSERT_EQ(*it.get_curr().second, kv->second);
-}
-
-TEST_F(SimpleFixture, compression)
-{
-  using CacheEntry = Cache<int, int>::CacheEntry;
-  CacheEntry entry(1, 10);
-  entry.compress();
-
-  ASSERT_EQ(entry.data(), nullptr);
-  ASSERT_NE(entry.compressed_data().size(), 0);
-
-  entry.decompress();
-
-  ASSERT_NE(entry.data(), nullptr);
-  ASSERT_EQ(entry.compressed_data().size(), 0);
-  ASSERT_EQ(entry.get_data(), 10);
 }
 
 struct TimeConsumingFixture : public Test

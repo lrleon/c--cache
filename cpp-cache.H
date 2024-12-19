@@ -80,9 +80,7 @@ class Cache
    private:
 
     Key _key = Key();
-    Data *_data = nullptr; // TODO: fix this memory leak!
-    vector<char> _compressed_data = vector<char>();
-    int _original_data_size = 0;
+    Data _data = Data();
 
    public:
 
@@ -99,17 +97,13 @@ class Cache
     }
 
     Entry(const Entry &other)
-      : _key(other._key), _data(other._data),
-        _compressed_data(other._compressed_data),
-        _original_data_size(other._original_data_size)
+      : _key(other._key), _data(other._data)
     {
       // empty
     }
 
     Entry(Entry &&other) noexcept
-      : _key(std::move(other._key)), _data(std::move(other._data)),
-        _compressed_data(std::move(other._compressed_data)),
-        _original_data_size(other._original_data_size)
+      : _key(std::move(other._key)), _data(std::move(other._data))
     {
       // empty
     }
@@ -121,8 +115,6 @@ class Cache
 
       _key = other._key;
       _data = other._data;
-      _compressed_data = other._compressed_data;
-      _original_data_size = other._original_data_size;
 
       return *this;
     }
@@ -134,8 +126,6 @@ class Cache
 
       _key = std::move(other._key);
       _data = std::move(other._data);
-      _compressed_data = std::move(other._compressed_data);
-      _original_data_size = std::move(other._original_data_size);
 
       return *this;
     }
@@ -144,11 +134,11 @@ class Cache
 
     const Key &key() const { return _key; }
 
-    const Data &get_data() const { return *_data; }
+    const Data &get_data() const { return _data; }
 
-    Data *data() { return _data; }
+    Data &data() { return _data; }
 
-    vector<char> &compressed_data() { return _compressed_data; }
+    Data* data_ptr() { return &_data; }
 
     void set_key(const Key &k) { _key = k; }
 
@@ -156,29 +146,21 @@ class Cache
 
     void set_data(const Data &d)
     {
-      _data = new Data(d);
+      _data = d;
     }
 
     void set_data(Data &&d)
     {
-      _data = new Data(std::move(d));
+      _data = move(d);
     }
 
     void set_data(Data *d) { _data = d; }
-
-    void set_compressed_data(const vector<char> &compressed_data)
-    {
-      _compressed_data = compressed_data;
-    }
-
-    int &original_data_size() { return _original_data_size; }
 
     void swap(Entry &other) noexcept
     {
       using std::swap;
       swap(this->_key, other._key);
       swap(this->_data, other._data);
-      swap(this->_compressed_data, other._compressed_data);
     }
 
     friend void swap(Entry &lhs, Entry &rhs) noexcept
@@ -319,7 +301,7 @@ class Cache
 
     bool operator==(const CacheEntry &other) const
     {
-      return this->key() == other.key();
+      return Cmp()(this->key(), other.key());
     }
 
     friend void
@@ -394,37 +376,6 @@ class Cache
       assert(this->original_data_size() > 0);
 
       return calc_data;
-    }
-
-    Data *decompress()
-    {
-      cout << "Decompressing data" << endl;
-      if (this->compressed_data().size() == 0)
-        return nullptr;
-
-      if (this->data() == nullptr)
-        this->set_data(new Data());
-
-      vector<char> decompressed_data = vector<char>(this->original_data_size());
-      lz4_decompress(this->compressed_data(), decompressed_data);
-      if constexpr (std::is_class_v<Data> &&
-                    requires(Data d) { d.deserialize(std::declval<const vector<char> &>()); })
-        this->data()->deserialize(decompressed_data);
-      else
-        {
-          TypeWrapper<Data> data_wrapper;
-          data_wrapper.deserialize(decompressed_data);
-          this->set_data(data_wrapper);
-        }
-
-      this->original_data_size() = 0;
-      this->compressed_data().clear();
-
-      assert (this->data() != nullptr);
-      assert (this->compressed_data().size() == 0);
-      assert (this->original_data_size() == 0);
-
-      return this->data();
     }
   }; // end class CacheEntry
 
@@ -541,11 +492,7 @@ class Cache
 
     assert(hash_table.size() < cache_size);
 
-    // CacheEntry *cache_entry = hash_table.insert(CacheEntry(entry));
-    // auto p = hash_table.contains_or_insert(std::move(entry));
-
-    CacheEntry *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
-    // const bool is_in_table = p.second;
+    auto *cache_entry = static_cast<CacheEntry *>(hash_table.search(entry));
 
     if (cache_entry != nullptr)
       {
@@ -666,7 +613,7 @@ class Cache
     cache_entry->set_status(CacheEntry::Status::READY);
     cache_entry->set_ttl_exp_time(high_resolution_clock::now() + positive_ttl);
 
-    return cache_entry->data();
+    return &cache_entry->data();
   }
 
   bool has(const Key &key)
@@ -726,7 +673,7 @@ class Cache
 
     auto *cache_entry = (this->*get_entry)();
 
-    return make_pair(cache_entry->key(), *cache_entry->data());
+    return make_pair(cache_entry->key(), cache_entry->data());
   }
 
  public:
@@ -743,22 +690,19 @@ class Cache
 
  private:
 
-  // handles the entry when it is not found on the cache.
+  // Handles the entry when it is not found on the cache.
   // Returns the calculated data.
   Data *resolve_cache_miss(CacheEntry *cache_entry,
                            const high_resolution_clock::time_point &time_now)
   {
-    Data *result;
+    Data *result_ptr = nullptr;
     unique_lock entry_lock(cache_entry->mtx());
-
-    if (cache_entry->data() == nullptr)
-      cache_entry->set_data(new Data());
 
     switch (cache_entry->status())
       {
         case CacheEntry::Status::AVAILABLE:
           cache_entry->set_status(CacheEntry::Status::CALCULATING);
-        if (miss_handler(cache_entry->key(), cache_entry->data(),
+        if (miss_handler(cache_entry->key(), &cache_entry->data(),
                          cache_entry->ad_hoc_code()))
           {
             cache_entry->set_ttl_exp_time(time_now + positive_ttl);
@@ -770,9 +714,7 @@ class Cache
             cache_entry->set_status(CacheEntry::Status::FAILED);
           }
 
-        result = cache_entry->data();
-        if (compression())
-          cache_entry->compress();
+        result_ptr = &cache_entry->data();
 
         entry_lock.unlock();
         {
@@ -791,17 +733,16 @@ class Cache
             {
               return cache_entry->status() != CacheEntry::Status::CALCULATING;
             });
-            // TODO: what if it was compressed? data would not have been set
-            result = cache_entry->data();
+            result_ptr = &cache_entry->data();
           }
         break;
 
         case CacheEntry::Status::READY:
-          result = cache_entry->data();
+          result_ptr = &cache_entry->data();
         break;
 
         case CacheEntry::Status::FAILED:
-          result = nullptr;
+          result_ptr = nullptr;
         break;
 
         default:
@@ -810,10 +751,10 @@ class Cache
         break;
       }
 
-    return result;
+    return result_ptr;
   }
 
-  // handles the entry when it is found on the cache.
+  // Handles the entry when it is found on the cache.
   // Returns true if the entry is still valid, false otherwise.
   bool resolve_cache_hit(CacheEntry *cache_entry,
                          const high_resolution_clock::time_point &time_now)
@@ -841,6 +782,8 @@ class Cache
                         {
                           return cache_entry->status() != Status::CALCULATING;
                         });
+
+    return true;
   }
 
  public:
@@ -859,29 +802,14 @@ class Cache
     auto *cache_entry = static_cast<CacheEntry *>(p.first);
 
     auto time_now = high_resolution_clock::now();
-    if (is_in_table && resolve_cache_hit(cache_entry, time_now))
-      {
-        if (compression())
-          {
-            scoped_lock entry_lock(cache_entry->mtx());
-            cache_entry->decompress();
-          }
-
-        return {cache_entry->data(), cache_entry->ad_hoc_code()};
-      }
-
+    if (is_in_table and resolve_cache_hit(cache_entry, time_now))
+      return {&cache_entry->data(), cache_entry->ad_hoc_code()};
 
     // 3. If not found ==> compute the data and write it to the cache_entry, which is
     //    already in the hash table
-    auto bkp_data = resolve_cache_miss(cache_entry, time_now);
+    auto data_ptr = resolve_cache_miss(cache_entry, time_now);
 
-    if (compression() && cache_entry->compressed_data().size() > 0)
-      {
-        scoped_lock entry_lock(cache_entry->mtx());
-        cache_entry->decompress();
-      }
-
-    return {cache_entry->data(), cache_entry->ad_hoc_code()};
+    return {data_ptr, cache_entry->ad_hoc_code()};
   }
 
   // computed/retrieved data, ad hoc status set by the miss handler
@@ -944,7 +872,7 @@ class Cache
       CacheEntry &cache_entry =
         OLhashTable<CacheEntry, CacheCmp>::Iterator::get_curr();
 
-      return make_pair(cache_entry.key(), cache_entry.data());
+      return make_pair(cache_entry.key(), &cache_entry.data());
     }
   };
 
