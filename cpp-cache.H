@@ -379,13 +379,6 @@ class Cache
     }
   };
 
-  template <typename Fct>
-  static
-  inline size_t entry_hash_fct(Fct fct, const CacheEntry &entry) noexcept
-  {
-    return fct(entry.key());
-  }
-
   // ********** data members of Cache class
 
   Dlink lru_list; // lru list
@@ -471,9 +464,20 @@ class Cache
     return cache_entry->has_ttl_expired(time_now);
   }
 
+  template <typename Fct>
+  static
+  inline size_t entry_hash_fct(Fct fct, const CacheEntry &entry) noexcept
+  {
+    return fct(entry.key());
+  }
  public:
 
-  using MissHandlerType = std::function<bool(const Key &, Data *, int8_t &)>;
+  // MissHandlerType is a function that is called when a key is not found in
+  // the cache. The function receives the key, a pointer to the data,
+  // a reference to an ad hoc code, and a parameter pack of arguments.
+
+  using MissHandlerType =
+    std::function<bool(const Key &, Data *, int8_t &, void*)>;
 
   static constexpr float ratio = 1.3f;
 
@@ -640,7 +644,8 @@ class Cache
   // Handles the entry when it is not found on the cache.
   // Returns the calculated data.
   Data *resolve_cache_miss(CacheEntry *cache_entry,
-                           const high_resolution_clock::time_point &time_now)
+                           const high_resolution_clock::time_point &time_now,
+                           void * cookie)
   {
     Data *result_ptr = nullptr;
     unique_lock entry_lock(cache_entry->mtx());
@@ -650,7 +655,7 @@ class Cache
         case CacheEntry::Status::AVAILABLE:
           cache_entry->set_status(CacheEntry::Status::CALCULATING);
         if (miss_handler(cache_entry->key(), cache_entry->data_ptr(),
-                         cache_entry->ad_hoc_code()))
+                         cache_entry->ad_hoc_code(), cookie))
           {
             cache_entry->set_ttl_exp_time(time_now + positive_ttl);
             cache_entry->set_status(CacheEntry::Status::READY);
@@ -739,7 +744,7 @@ class Cache
 
   // computed/retrieved data, ad hoc status set by the miss handler
   pair<Data *, int8_t>
-    retrieve_from_cache_or_compute(const Key &key)
+    retrieve_from_cache_or_compute(const Key &key, void * cookie = nullptr)
   {
     CacheEntry entry(key);
 
@@ -757,7 +762,7 @@ class Cache
     if (is_in_table and resolve_cache_hit(cache_entry, time_now))
       return {cache_entry->data_ptr(), cache_entry->ad_hoc_code()};
 
-    auto data_ptr = resolve_cache_miss(cache_entry, time_now);
+    auto data_ptr = resolve_cache_miss(cache_entry, time_now, cookie);
 
     return {data_ptr, cache_entry->ad_hoc_code()};
   }

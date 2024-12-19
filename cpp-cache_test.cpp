@@ -99,8 +99,7 @@ struct SimpleFixture : public Test
 {
   //template <typename ... Args>
   static bool miss_handler(const int &key, int *data,
-                           int8_t &ad_hoc_code /*,
-                           Args ... args */)
+                           int8_t &ad_hoc_code, void *)
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
@@ -363,7 +362,7 @@ TEST_F(SimpleFixture, iterator)
 struct TimeConsumingFixture : public Test
 {
   static bool miss_handler(const int &key, int *data,
-                           int8_t &ad_hoc_code)
+                           int8_t &ad_hoc_code, void*)
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
@@ -389,7 +388,7 @@ TEST_F(TimeConsumingFixture, calculating_status_while_computing)
     std::async(std::launch::async, [this, &cache_entry]()
     {
       return cache.resolve_cache_miss(cache_entry,
-                                      high_resolution_clock::now());
+                                      high_resolution_clock::now(), nullptr);
     });
 
   // wait 1 s
@@ -566,7 +565,7 @@ TEST_F(TimeConsumingFixture, multithread_heavy_threads)
 struct RandomTimeFixture : public Test
 {
   static bool miss_handler(const int &key, int *data,
-                           int8_t &ad_hoc_code)
+                           int8_t &ad_hoc_code, void *)
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
@@ -645,7 +644,7 @@ struct ComplexKey : public Test
   }
 
   static bool miss_handler(const Tree &tree, int *data,
-                           int8_t &ad_hoc_code)
+                           int8_t &ad_hoc_code, void*)
   {
     *data = tree.foldl<int>(0, [](int acc, int i)
     {
@@ -708,25 +707,47 @@ TEST_F(ComplexKey, cache)
   ASSERT_EQ(ad_hoc_code_1, 1);
   ASSERT_EQ(ad_hoc_code_2, 1);
 }
-//
-//struct VariadicHandler : public Test
-//{
-//  template <typename ... Args>
-//  static bool miss_handler(const int &key, int *data,
-//                           int8_t &ad_hoc_code,
-//                           Args ... args)
-//  {
-//    *data = key * 10;
-//    ++ad_hoc_code; // never must be greater than 1
-//    return true;
-//  }
-//
-//  Cache<int, int, std::equal_to<int>, int> cache;
-//
-//  VariadicHandler()
-//    : cache(5, 1s, 1s, miss_handler)
-//  {
-//    // empty
-//  }
-//
-//};
+
+struct CookieHandler : public Test
+{
+  struct Parameters
+  {
+    int a;
+    int b;
+  };
+
+  static bool miss_handler(const int &key, int *data,
+                           int8_t &ad_hoc_code,
+                           void* cookie)
+  {
+    Parameters* params = static_cast<Parameters*>(cookie);
+    cout << "Params: " << params->a << " " << params->b << endl;
+
+    *data = params->a + params->b;
+    ++ad_hoc_code; // never must be greater than 1
+
+    return true;
+  }
+
+  Cache<int, int> cache;
+
+  CookieHandler()
+    : cache(5, 1s, 1s, miss_handler)
+  {
+    // empty
+  }
+};
+ TEST_F(CookieHandler, cookie)
+{
+  Parameters params = {10, 20};
+  auto cookie = static_cast<void*>(&params);
+
+  auto [data, ad_hoc_code] =
+    cache.retrieve_from_cache_or_compute(1, cookie);
+
+  ASSERT_EQ(cache.size(), 1);
+  ASSERT_TRUE(cache.has(1));
+
+  ASSERT_EQ(*data, 30);
+  ASSERT_EQ(ad_hoc_code, 1);
+}
