@@ -154,8 +154,6 @@ class Cache
       _data = move(d);
     }
 
-    void set_data(Data *d) { _data = d; }
-
     void swap(Entry &other) noexcept
     {
       using std::swap;
@@ -407,12 +405,6 @@ class Cache
   {
     cache_entry->link_lru()->del();
     lru_list.insert(cache_entry->link_lru());
-  }
-
-  void move_to_lru_rear(CacheEntry *cache_entry)
-  {
-    cache_entry->link_lru()->del();
-    lru_list.append(cache_entry->link_lru());
   }
 
   void do_mru(CacheEntry *cache_entry)
