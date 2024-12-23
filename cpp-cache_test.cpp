@@ -362,7 +362,7 @@ TEST_F(SimpleFixture, iterator)
 struct TimeConsumingFixture : public Test
 {
   static bool miss_handler(const int &key, int *data,
-                           int8_t &ad_hoc_code, void*)
+                           int8_t &ad_hoc_code, void *)
   {
     *data = key * 10;
     ++ad_hoc_code; // never must be greater than 1
@@ -644,7 +644,7 @@ struct ComplexKey : public Test
   }
 
   static bool miss_handler(const Tree &tree, int *data,
-                           int8_t &ad_hoc_code, void*)
+                           int8_t &ad_hoc_code, void *)
   {
     *data = tree.foldl<int>(0, [](int acc, int i)
     {
@@ -718,9 +718,9 @@ struct CookieHandler : public Test
 
   static bool miss_handler(const int &key, int *data,
                            int8_t &ad_hoc_code,
-                           void* cookie)
+                           void *cookie)
   {
-    Parameters* params = static_cast<Parameters*>(cookie);
+    Parameters *params = static_cast<Parameters *>(cookie);
     cout << "Params: " << params->a << " " << params->b << endl;
 
     *data = params->a + params->b;
@@ -737,10 +737,10 @@ struct CookieHandler : public Test
     // empty
   }
 };
- TEST_F(CookieHandler, cookie)
+TEST_F(CookieHandler, cookie)
 {
   Parameters params = {10, 20};
-  auto cookie = static_cast<void*>(&params);
+  auto cookie = static_cast<void *>(&params);
 
   auto [data, ad_hoc_code] =
     cache.retrieve_from_cache_or_compute(1, cookie);
